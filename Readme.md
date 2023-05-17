@@ -2,6 +2,37 @@
 This is a lightweight, fast, and barebones example of running individually addressable WSB2182b LEDs from an STM32.  Written in C, also compatible with C++.
 I wrote this for an STM32L031 which I had on hand, but there's a pretty good chance you're not using that exact board, so there are instructions below on how to set up this project in STM32CubeIDE for a different MCU.
 
+# Using this library
+There are only 2 functions that you need to use for this library:
+- `setColor(ledNumber, red, green, blue)`
+	- Set the given LED number to the specified RGB value (red/green/blue should be 0-255)
+- `transmit()`
+	- This will push all the data out to the LEDs.  It should be called any time that you change LED colors and want the changes to actually take effect
+
+## Example 1
+Here's one way to use this library
+- Call setColor(1,255,255,255) somwhere in or before your main loop to set the color of LED 1 to full white
+- Call "transmit()" somewhere in your main loop to actually flush the colors to the LEDs
+- LED 1 (the second LED) should now be white when you run your code!
+
+## Example 2 (simple animation)
+	  uint32_t animationCounter = 0;	//Used for animating the lights
+	  while (1) /*Main loop*/
+	  {
+		  //Set the color of every LED to create a basic animation
+		  for (int i = 0; i < 300; i++) {
+			  //Every 10th LED is on, all the rest are off
+			  if (i % 10 == animationCounter % 10) {
+				  setColor(i,255,0,255);	//Light purple color
+			  } else {
+				  setColor(i,0,0,0);
+			  }
+		  }
+
+		  animationCounter++;	//Go to th next frame of animation
+		  transmit();	//Send out our LED data to the LEDs so they actually light up
+	  }
+
 # Import this project
 Are you using an STM32L031?  Then you're in luck!  Just import this project and run it!
 If you're using a different microcontroller, there's instructions below for setting up a project on your own.
@@ -59,33 +90,4 @@ All of this code can be found in this project under Core/Src/main.c
 	-  It's recommended to copy the spiBuff array into the "USER CODE BEGIN PV" section
 - Your code should now be able to compile.  Test it out before adding any code to actually control the lights
 
-# Using this library
-There are only 2 functions that you need to use for this library:
-- 'setColor(ledNumber, red, green, blue)'
-	- Set the given LED number to the specified RGB value (red/green/blue should be 0-255)
-- 'transmit()'
-	- This will push all the data out to the LEDs.  It should be called any time that you change LED colors and want the changes to actually take effect
 
-## Example 1
-Here's one way to use this library
-- Call setColor(1,255,255,255) somwhere in or before your main loop to set the color of LED 1 to full white
-- Call "transmit()" somewhere in your main loop to actually flush the colors to the LEDs
-- LED 1 (the second LED) should now be white when you run your code!
-
-## Example 2 (simple animation)
-	  uint32_t animationCounter = 0;	//Used for animating the lights
-	  while (1) /*Main loop*/
-	  {
-		  //Set the color of every LED to create a basic animation
-		  for (int i = 0; i < 300; i++) {
-			  //Every 10th LED is on, all the rest are off
-			  if (i % 10 == animationCounter % 10) {
-				  setColor(i,255,0,255);	//Light purple color
-			  } else {
-				  setColor(i,0,0,0);
-			  }
-		  }
-
-		  animationCounter++;	//Go to th next frame of animation
-		  transmit();	//Send out our LED data to the LEDs so they actually light up
-	  }
