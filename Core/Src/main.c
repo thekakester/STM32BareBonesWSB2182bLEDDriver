@@ -51,18 +51,25 @@ uint8_t spiBuff[(300*9)+2];	//Each LED uses 9 bytes of info.  pad 1 byte on both
 
 double theta = 0;	//Used for animating the lights
 
+int level = 19;		//Starting level
 
-int numLevels = 18;
-int level = 17;		//Starting level
+int currentLevelSelection = 0;	//Used for level select page
+int maxLevel = 19;	//The highest level that can be selected during level select
 
 int gameState = 0;	//0= Display Level
-int stateCounter = 0;	//Increments with each frame, reset when game state changes
+int levelFrameNum = 0;	//Increments with each frame, reset when game state changes
 int prevTarget = 0;
+int cheated = 0;		//Cheating is when you do level select.  If you win while cheating, the victory screen shows red
 
 int target = 0;	//Current moving pixel
+uint8_t targetIsLinear = 0;	//Show target as a bar on the loser screen
+uint8_t targetIsMonotonic = 0;	//Show target uint monotonic coordinate system instead of zig-zag
 int goal = 0;	//Goal pixel
 
-uint8_t lastButtonState = 0;
+int buttonIdleCounter = 0;
+uint8_t buttonDown = 0;	//Is the button currently being held down
+uint8_t buttonPressed = 0;	//When the button transitions from not pressed to pressed
+uint8_t prevButtonDown = 0;	//Used for calculating buttonPressed
 
 uint8_t bombPositions[30];	//For the level_bombDrop
 uint8_t gameboard[300];	//Misc buffer different levels
@@ -72,7 +79,7 @@ int bombsPlanted = 0;
 int snakeX = 0;
 int snakeY = 0;
 int snakeDir = 0;	//0=up, 1=right, 2=down, 3=left
-int snakeMoves = 0;
+int snakeLength = 0;
 
 //Bucket Drop variables
 double yVel = 0;
@@ -80,6 +87,9 @@ double ballY = 9;
 double prevY = 9;
 uint8_t applyGravity = 0;
 int ballsScored = 0;
+
+//Level Select variables
+uint8_t levelSelectButtonPress = 0;
 
 const HALFBOARDSIZE = (GAMEBOARDSIZE/2);
 const CENTER_PX = ((GAMEBOARDSIZE/2)); /*How many pixels represents the center*/
@@ -176,6 +186,11 @@ int main(void)
 		  }
 	  }*/
 
+	  //Calculate button down and button pressed
+	  buttonDown = !HAL_GPIO_ReadPin(BUTTON_GPIO_Port, BUTTON_Pin);
+	  buttonPressed = buttonDown && !prevButtonDown;
+	  prevButtonDown = buttonDown;	//Used for calculating next loop
+
 	  switch (gameState) {
 	  case 1:
 		  playGame();
@@ -189,12 +204,29 @@ int main(void)
 	  case 4:
 		  beatTheGame();
 		  break;
-	  default:
+	  case 5:
 		  levelDisplay();
+		  break;
+	  case 6:
+		  levelSelect();
+		  break;
+	  default:
+		  gameState = 5;	//Start on level display if we ever get an error
 		  break;
 	  }
 
-	  stateCounter++;
+	  levelFrameNum++;
+
+	  //Reset the game when the button is idle for too long
+	  buttonIdleCounter++;
+	  if (buttonDown) { buttonIdleCounter = 0; }
+	  if (buttonIdleCounter > 1000) {
+		  buttonIdleCounter = 0;
+		  gameState = 0;
+		  levelFrameNum = 0;
+		  level = 0;
+		  cheated = 0;
+	  }
 
 
 	  transmit();	//Send out our LED data to the LEDs so they actually light up
@@ -384,24 +416,17 @@ void winnerState() {
 		setColorMonotonic(i,0,64,0);
 	}
 
-	if (stateCounter > 50) {
-		for (int i = 0; i < (stateCounter - 50)*3; i++) {
+	if (levelFrameNum > 50) {
+		for (int i = 0; i < (levelFrameNum - 50)*3; i++) {
 			setColorMonotonic(i,0,0,0);
 		}
 	}
 
-	if (stateCounter >= 50*3) {
+	if (levelFrameNum >= 50*3) {
 		level++;
 		theta = 0;	//Make sure they can't just hold down the button to win
-
-		//Beat the game
-		if (level >= numLevels) {
-		  gameState = 4;
-		} else {
-			gameState = 0;	//Level display (next level)
-		}
-
-		stateCounter = 0;	//Reset state counter
+		gameState = 0;	//Level display (next level)
+		levelFrameNum = 0;	//Reset state counter
 	}
 }
 
@@ -409,7 +434,7 @@ void loserState() {
 
 	//Flash red border lights
 	uint8_t red = 32;
-	if (stateCounter % 50 < 10) { red = 0; }
+	if (levelFrameNum % 50 < 10) { red = 0; }
 
 	//Clear the screen
 	for (int i = 0; i < 300; i++) {
@@ -426,18 +451,51 @@ void loserState() {
 		setPxColor(9,y,red,0,0);	//Right border
 	}
 
-	//Show goal and target pixels
-	setColor(goal,64,64,64);
-	setColor(target,0,0,64);
-
-	if (!HAL_GPIO_ReadPin(BUTTON_GPIO_Port, BUTTON_Pin)) {
-		stateCounter += 2;	//Go 3x the speed if user is holding button
+	//Show goal and target pixels/lines
+	if (targetIsLinear) {
+		//Show target and goal as a line that goes across the screen
+		for (int x = 1; x < 9; x++) {
+			setColorMonotonic((x*30) + goal,64,64,64);
+			setColorMonotonic((x*30) + target,0,0,64);
+		}
+	} else {
+		//Show target and goal as a single pixel
+		if (targetIsMonotonic) {
+			//Show target and goal using monotonic coordinate system
+			setColorMonotonic(goal,64,64,64);
+			setColorMonotonic(target,0,0,64);
+		} else {
+			//Show target and goal using zig-zag coordinate system
+			setColor(goal,64,64,64);
+			setColor(target,0,0,64);
+		}
 	}
 
-	if (stateCounter >= 50*3) {
+	if (buttonDown) {
+		levelFrameNum += 2;	//Go 3x the speed if user is holding button
+	}
+
+	if (levelFrameNum >= 50*3) {
 		//level = 0;
 		gameState = 0;	//Level Display
-		stateCounter = 0;	//Reset state counter
+		levelFrameNum = 0;	//Reset level frame counter
+	}
+
+
+	//Special case, go to level select
+	//To enter level select, play level 1, and stop the bar all the way at the top.
+	//Then, on the loser select screen, press the button 4 times
+	if (level == 0 && target == 29) {
+		if (buttonPressed) {
+			levelSelectButtonPress++;
+
+			if (levelSelectButtonPress >= 4) {
+				gameState = 6;	//Level select screen
+				levelFrameNum = 0;
+			}
+
+			HAL_Delay(10);	//Debounce button
+		}
 	}
 }
 
@@ -446,29 +504,29 @@ void levelDisplay() {
 	//Level display takes 10 frames per level, plus 70 frames
 	int frameTime = (10*level) + 150;
 
-	int greenAmount = 0;	//G value for RGB of level display
+	int lightupAmount = 0;	//Extra light up amount for when the user holds the button
 
 	//Start the level
-	if (stateCounter >= frameTime) {
+	if (levelFrameNum >= frameTime) {
 
 		//Wait for button to be unpressed
-		if (HAL_GPIO_ReadPin(BUTTON_GPIO_Port, BUTTON_Pin)) {
+		if (!buttonDown) {
 			theta = 0;
 			gameState = 1;
-			stateCounter = 0;
+			levelFrameNum = 0;
 
-			//Clear bombs for bomb-drop level
-			for (int i = 0; i < sizeof(bombPositions); i++) {
-				bombPositions[i] = 0;
-			}
-			bombPositions[13] = 1;
-			bombPositions[14] = 1;
-			bombPositions[15] = 1;
-
-			bombsPlanted = 0;
 		} else {
-			greenAmount = 32;	//Make the pixels a different color to show we're ready for the next
+			lightupAmount = 32;	//Make the pixels a different color to show we're ready for the next
 		}
+
+		//Reset level select counter
+		levelSelectButtonPress = 0;
+
+		//Reset target and goal
+		target = 0;;
+		goal = 0;
+		targetIsLinear = 0;		//Display loser state as a BAR instead of dot
+		targetIsMonotonic = 0;	//Display target using monotonic coordinate system instead of zig-zag
 	}
 
 
@@ -483,77 +541,153 @@ void levelDisplay() {
 		int yi = (i / 5) * 2;
 
 		//Each level dot shows up 10 frames after the previous
-		int brightness = stateCounter - (i*10);
-		brightness /= 10;
+		int brightness = levelFrameNum - (i*10);
 		if (brightness < 0) { brightness = 0; }
 		if (brightness > 255) { brightness = 255; }
 
 		int x = xi + 1;
 		int y = yi + 12;
 		int pixel = (x * 30) + y;
-		setColorMonotonic(pixel,brightness,greenAmount,brightness);
+		setColorMonotonic(pixel,brightness,lightupAmount,brightness);
 	}
 
 	//If the button is held, show the level faster
-	if (!HAL_GPIO_ReadPin(BUTTON_GPIO_Port, BUTTON_Pin)) {
-		stateCounter += 4;	//Advance 5x as fast
+	if (buttonDown) {
+		levelFrameNum += 4;	//Advance 5x as fast
+	}
+
+}
+
+//To get to this screen, go to the first level and lose by stopping the pixel at the top row.
+//While on the loser screen, press the button 4 times to enter into level select
+void levelSelect() {
+
+	//Init.  Reset selected level
+	if (levelFrameNum == 1) {
+		///Actually dont.  Pick up where you left off.
+		//currentLevelSelection = 0;
+
+		cheated = 1;	//Set cheat mode, so you can't win without me noticing
+	}
+
+	//Clear screen
+	for (int i = 0; i < 300; i++) {
+		setColor(i,0,0,0);
+	}
+
+	//Draw purple border
+	for (int x = 0; x < 10; x++) {
+		setColorMonotonic((x*30) + 0 ,16,0,16);
+		setColorMonotonic((x*30) + 29,16,0,16);
+	}
+
+	//Do nothing for first 50 frames.  Just show border
+	if (levelFrameNum < 50) {
+		//Just draw a purple rectangle and do nothing, make sure the person doesn't accidentally press the button
+		return;
+	}
+
+	for (int y = 0; y < 30; y++) {
+		setColorMonotonic(y ,16,0,16);
+		setColorMonotonic(299-y,16,0,16);
+	}
+
+	if (buttonPressed) {
+		currentLevelSelection++;
+		currentLevelSelection %= (maxLevel+1);	//0-maxLevel
+	}
+
+	//Draw the level dots
+	for (int i = 0; i <= maxLevel; i++) {
+		int yi = i / 5;
+		int xi = i % 5;
+
+		int r = 32;
+		int g = 0;
+		int b = 32;
+		if (i == currentLevelSelection) {
+			r = b = 0;
+			g = 32;
+		}
+
+		int x = 2 + xi;
+		int y = 12 + yi;
+		setColorMonotonic((x*30) + y,r,g,b);
+	}
+
+	//After inactivity.  Start the level
+	if (buttonIdleCounter > 150) {
+		level = currentLevelSelection;
+		levelFrameNum = 0;
+		gameState = 0;	//Level display
 	}
 
 }
 
 void beatTheGame() {
+	buttonIdleCounter = 0;	//Stay on this page indefinitely
 
-	double t = stateCounter / 30.0;
-	int amplitude = 6+(8 * sin(t));
+	int lineFrameCounter = (levelFrameNum/5) % 60;	//Repeats 0-60
 
-	int r,g,b;
-	r = (int)16*sin(t * 0.1);
-	g = (int)16*sin((t *0.1) + (1.1 * 3.1));
-	b = (int)16*sin((t * 0.1) + (0.7 * 3.2));
-	if (r < 0) { r = 0; }
-	if (g < 0) { g = 0; }
-	if (b < 0) { b = 0; }
+	//Draw a green line on the sides that moves up
+	//Also a cyan line on columns 2 + 7
+	for (int y = 0; y < 30; y++) {
+		int gVal = 0;
+		if (y < lineFrameCounter) { gVal = 32; }
+		if (y+30 < lineFrameCounter) { gVal = 0; }
 
+		//Outer columns
+		setColorMonotonic(y,0,gVal,0);
+		setColorMonotonic(270+y,0,gVal,0);
 
-	//DEBUG LED
-	uint8_t debugLedValue = r > 128;
-	HAL_GPIO_WritePin(LD3_GPIO_Port, LD3_Pin, debugLedValue);
-
-
-	int ra,ga,ba;
-	ra = (int)16*sin(t * 0.15);
-	ga = (int)16*sin((t *0.15) + (1.1 * 3.1));
-	ba = (int)16*sin((t * 0.15) + (0.7 * 3.2));
-
-	//Prevent LEDS from being so bright they draw too much power and
-	//cause a brownout
-	r /= 32;
-	g /= 32;
-	b /= 32;
-	ra /= 32;
-	ga /= 32;
-	ba /= 32;
-
-	if (r < 0) { r = 0; }
-	if (g < 0) { g = 0; }
-	if (b < 0) { b = 0; }
-
-
-	for (int i = 0; i < 300; i++) {
-		  int offset = (i % GAMEBOARDSIZE);	//Gives us an index from -10 to +10
-		  if (abs(offset) <= amplitude) {
-			  setColorMonotonic(i,r,g,b);
-		  } else {
-			  setColorMonotonic(i,ra,ga,ba);
-		  }
+		//Inner columns (opposite direction)
+		setColorMonotonic(89-y,0,gVal,gVal);
+		setColorMonotonic(239-y,0,gVal,gVal);
 	}
 
+	//Make columns 1 + 8 (and 3 + 6) pulse
+	int intensity = (levelFrameNum/7) % 60;	//Different period
+	if (intensity > 30) {intensity = 60 - intensity; }
+
+	for (int y = 0; y < 30; y++) {
+		setColorMonotonic(30+y,intensity,intensity,0);	//Yellow
+		setColorMonotonic(240+y,intensity,intensity,0);	//Yellow
+		setColorMonotonic(90+y,0,0,intensity);	//Dark Blue
+		setColorMonotonic(180+y,0,0,intensity);	//Dark Blue
+	}
+
+	//Columns 4 + 5 are raining
+	int rainBlotout = (levelFrameNum/5) % 4;	//Repeats 0-4, representing the dark pixels
+	int rainBlotout2 = (rainBlotout + 1) % 4;
+	for (int y = 0; y < 30; y++) {
+		int intensity = 0;
+		int intensity2 = 0;
+		if (y % 4 == rainBlotout) { intensity = 16;}
+		if (y % 4 == rainBlotout2) { intensity2 = 16;}
+		setColorMonotonic(120+y,intensity,0,intensity);	//pink
+		setColorMonotonic(150+y,intensity2,0,intensity2);	//pink
+	}
+
+	if (cheated) {
+		//Show 5 rows of red on the top and bottom
+		for (int y = 0; y < 5; y++) {
+			for (int x = 0; x < 10; x++) {
+				setColorMonotonic((x*30)+y,16,0,0);
+			}
+		}
+		for (int y = 25; y < 30; y++) {
+			for (int x = 0; x < 10; x++) {
+				setColorMonotonic((x*30)+y,16,0,0);
+			}
+		}
+	}
 
 	//If they waited long enough and beat the game, restart
-	if (stateCounter >= 200 && !HAL_GPIO_ReadPin(BUTTON_GPIO_Port, BUTTON_Pin)) {
+	if (levelFrameNum >= 200 && buttonDown) {
 		level = 0;
 		gameState = 0;
-		stateCounter = 0;
+		levelFrameNum = 0;
+		cheated = 0;
 	}
 
 }
@@ -586,50 +720,49 @@ void playGame() {
 	  case 6:
 		  level_dropBombs(0.05,8,0); break;	//Drop bombs (8x)
 	  case 7:
-		  level_snake(100,5); break;
+		  level_snake(100,64); break;
 	  case 8:
-		  level_snake(100,10); break;
+		  level_snake(100,120); break;
 	  case 9:
-		  level_singleDot(0.015,0); break;	//Stationary goal, really fast single pixel
-	  case 10:
-		  level_fillTheScreen(3); break;
-	  case 11:
-		  level_crissCross(0.02); break;	//Criss cross
-	  case 12:
-		  level_singleDot(0.015,1); break;	//Moving goal
-	  case 13:
-		  level_dropBombs(0.05,3,1); break;
-	  case 14:
-		  level_fillTheScreen(5); break;
-	  case 15:
-		  level_snake(30,10); break;
-	  case 16:
 		  level_bucketDrop(1,1);break;
-	  case 17:
+	  case 10:
 		  level_bucketDrop(1,2);break;
-	  }
-
-	  //Reset the game if idle
-	  if (stateCounter >= 1000) {
-		  level = 0;
-		  gameState = 0;
-		  stateCounter = 0;
+	  case 11:
+		  level_singleDot(0.015,0); break;	//Stationary goal, really fast single pixel
+	  case 12:
+		  level_fillTheScreen(3); break;
+	  case 13:
+		  level_crissCross(0.02); break;	//Criss cross
+	  case 14:
+		  level_singleDot(0.015,1); break;	//Moving goal
+	  case 15:
+		  level_dropBombs(0.05,5,1); break;
+	  case 16:
+		  level_fillTheScreen(5); break;
+	  case 17:
+		  level_snake(30,120); break;
+	  case 18:
+		  level_bucketDrop(1,3);break;
+	  default:
+		  beatTheGame();
+		  break;
 	  }
 }
 
 //Row of bars that move up and down, line them up to win
 void level_bars(double thetaSpeed) {
+	targetIsLinear = 1;	//Show the loser state as a bar
 	target = (int)(HALFBOARDSIZE * sin(theta)) + HALFBOARDSIZE;
 	goal = CENTER_PX;
 
 	  //Check button press for levels 1-3
-	  if (!HAL_GPIO_ReadPin(BUTTON_GPIO_Port, BUTTON_Pin)) {
+	  if (buttonDown) {
 		  if (target == goal) {
 			  gameState = 2;	//Winner stage
-			  stateCounter = 0;
+			  levelFrameNum = 0;
 		  } else {
 			  gameState = 3;	//Loser stage
-			  stateCounter = 0;
+			  levelFrameNum = 0;
 		  }
 	  } else {
 		  theta += thetaSpeed;
@@ -676,13 +809,13 @@ void level_singleDot(double thetaSpeed, uint8_t moveGoal) {
 	  prevTarget = target;
 
 	  //Check button press for levels 4+
-	  if (!HAL_GPIO_ReadPin(BUTTON_GPIO_Port, BUTTON_Pin)) {
+	  if (buttonDown) {
 		  if (target == goal) {
 			  gameState = 2;	//Winner stage
-			  stateCounter = 0;
+			  levelFrameNum = 0;
 		  } else {
 			  gameState = 3;	//Loser stage
-			  stateCounter = 0;
+			  levelFrameNum = 0;
 		  }
 	  } else {
 		  theta += thetaSpeed;
@@ -721,13 +854,13 @@ void level_crissCross(double thetaSpeed) {
 	  setColor(targetPixel,0,0,255);
 
 	  //Check button press for levels 4+
-	  if (!HAL_GPIO_ReadPin(BUTTON_GPIO_Port, BUTTON_Pin)) {
+	  if (buttonDown) {
 		  if (targetPixel == goalPixel) {
 			  gameState = 2;	//Winner stage
-			  stateCounter = 0;
+			  levelFrameNum = 0;
 		  } else {
 			  gameState = 3;	//Loser stage
-			  stateCounter = 0;
+			  levelFrameNum = 0;
 		  }
 	  } else {
 		  theta += thetaSpeed;
@@ -760,13 +893,13 @@ void level_fillTheScreen(int pixelsPerFrame) {
 	  if (theta > 299) { theta = 0; }
 
 	  //Check button press for levels 4+
-	  if (!HAL_GPIO_ReadPin(BUTTON_GPIO_Port, BUTTON_Pin)) {
+	  if (buttonDown) {
 		  if (target == goal) {
 			  gameState = 2;	//Winner stage
-			  stateCounter = 0;
+			  levelFrameNum = 0;
 		  } else {
 			  gameState = 3;	//Loser stage
-			  stateCounter = 0;
+			  levelFrameNum = 0;
 		  }
 	  } else {
 		  theta += pixelsPerFrame;
@@ -777,45 +910,57 @@ void level_fillTheScreen(int pixelsPerFrame) {
 void level_dropBombs(double thetaSpeed, int goalBombs, uint8_t manyStarterBombs) {
 
 	//Default bombs (first loop only)
-	if (manyStarterBombs == 1 && bombPositions[1] == 0) {
-		bombPositions[1] = 1;
-		bombPositions[4] = 1;
-		bombPositions[7] = 1;
-		bombPositions[10] = 1;
-		bombPositions[16] = 1;
-		bombPositions[19] = 1;
-		bombPositions[22] = 1;
-		bombPositions[25] = 1;
-		bombPositions[28] = 1;
+	if (levelFrameNum == 1) {
+
+		//Clear bombs for bomb-drop level
+		for (int i = 0; i < sizeof(bombPositions); i++) {
+			bombPositions[i] = 0;
+		}
+
+		bombPositions[11] = 1;
+		bombPositions[14] = 1;
+		bombPositions[17] = 1;
+
+		bombsPlanted = 0;
+
+		if (manyStarterBombs) {
+			bombPositions[1] = 1;
+			bombPositions[4] = 1;
+			bombPositions[7] = 1;
+			bombPositions[10] = 1;
+			bombPositions[16] = 1;
+			bombPositions[19] = 1;
+			bombPositions[22] = 1;
+			bombPositions[25] = 1;
+			bombPositions[28] = 1;
+		}
 	}
 
 	target = (int)(HALFBOARDSIZE * sin(theta)) + HALFBOARDSIZE;
+	goal = target;	//Show goal and target as the same line
+	targetIsLinear = 1;
 
-
-		uint8_t currentButtonState = !HAL_GPIO_ReadPin(BUTTON_GPIO_Port, BUTTON_Pin);
 
 	  //Check button press for levels 1-3
-	  if (currentButtonState && !lastButtonState) {
+	  if (buttonPressed) {
 		  //Did they collide with a bomb?
 
 		  if (bombPositions[target] == 1) {
 			  gameState = 3;	//Loser stage
-			  stateCounter = 0;
+			  levelFrameNum = 0;
 		  } else {
 			  bombPositions[target] = 1;	//Set this as a new bomb position
 			  bombsPlanted++;
 
 			  if (bombsPlanted == goalBombs) {
 				  gameState = 2;	//Winner stage
-				  stateCounter = 0;
+				  levelFrameNum = 0;
 			  }
 		  }
 
 	  } else {
 		  theta += thetaSpeed;
 	  }
-
-	  lastButtonState = currentButtonState;
 
 	  int progress = (bombsPlanted * 10) / goalBombs;
 
@@ -842,27 +987,21 @@ void level_dropBombs(double thetaSpeed, int goalBombs, uint8_t manyStarterBombs)
 void level_snake(int speed, int goalScore) {
 
 	//Reset the gameboard
-	if (stateCounter == 1) {	//First frame
+	if (levelFrameNum == 1) {	//First frame
 		for (int i = 0; i < 300; i++) {
 			gameboard[i] = 0;
 		}
 		snakeX = 0;
-		snakeY = 0;
+		snakeY = 2;
 		snakeDir = 0;
-		snakeMoves = 0;
+		snakeLength = 0;
 	}
-
-	//Press the button to change directions
-	uint8_t currentButtonState = !HAL_GPIO_ReadPin(BUTTON_GPIO_Port, BUTTON_Pin);
 
 	//Change direction when the button is pressed
-	if (currentButtonState && ! lastButtonState) {
+	if (buttonPressed) {
 		snakeDir++;
 		snakeDir %= 4;	//0-3 are valids
-		snakeMoves++;	//Score
 	}
-
-	lastButtonState = currentButtonState;
 
 
 	//Fill in previous position
@@ -880,21 +1019,26 @@ void level_snake(int speed, int goalScore) {
 			snakeX--; break;
 	}
 
-	if (snakeX < 0 || snakeX > 9 || snakeY < 0 || snakeY > 27) {
+	snakeLength++;
+	target = (snakeX*30) + snakeY;	//Calculate snake position
+	targetIsMonotonic = 1;			//Use monotonic coordinate system for loser screen
+
+
+	if (snakeX < 0 || snakeX > 9 || snakeY < 2 || snakeY > 27) {
 		gameState = 3;	//Loser stage
-		stateCounter = 0;
+		levelFrameNum = 0;
 	}
 
 	//If you hit your own self
 	if (gameboard[(snakeX*30) + snakeY] == 1) {
 		gameState = 3;	//Loser stage
-		stateCounter = 0;
+		levelFrameNum = 0;
 	}
 
 	//If you moved enough
-	if (snakeMoves >= goalScore) {
+	if (snakeLength >= goalScore) {
 		gameState = 2;	//Winner stage
-		  stateCounter = 0;
+		  levelFrameNum = 0;
 	}
 
 	  //Display the gameboard
@@ -907,19 +1051,24 @@ void level_snake(int speed, int goalScore) {
 	  }
 
 	  //Draw progress bar
-	  int progress = (snakeMoves * 10) / goalScore;
+	  int progress = (snakeLength * 10) / goalScore;
 	  for (int x = 0; x < 10; x++) {
 		  if (x >= progress) {
-			  setColorMonotonic((x * 30)+28,32,0,0);	//RED
-			  setColorMonotonic((x * 30)+29,32,0,0);
+			  //Red
+			  setColorMonotonic((x * 30)+29,32,0,0);	//Top Row
+			  setColorMonotonic((x * 30)+28,32,0,0);	//Second-from-top row
+			  setColorMonotonic((x * 30)+0,32,0,0);		//Bottom Row
+			  setColorMonotonic((x * 30)+1,32,0,0);		//Second Row
 		  } else {
-			  setColorMonotonic((x * 30)+28,0,32,0);	//Green
-			  setColorMonotonic((x * 30)+29,0,32,0);
+			  setColorMonotonic((x * 30)+29,0,32,0);	//Top Row
+			  setColorMonotonic((x * 30)+28,0,32,0);	//Second-from-top r
+			  setColorMonotonic((x * 30)+0,0,32,0);		//Bottom Row
+			  setColorMonotonic((x * 30)+1,0,32,0); 	//Second Row
 		  }
 	  }
 
 	  //Draw cursor
-	  setColorMonotonic((snakeX*30) + snakeY,0,0,64);
+	  setColorMonotonic(target,0,0,64);
 	  HAL_Delay(speed);
 }
 
@@ -928,7 +1077,7 @@ void level_bucketDrop(int bucketSpeed, int numBalls) {
 	target = 0;
 
 	//Reset game first time
-	if (stateCounter == 1) {
+	if (levelFrameNum == 1) {
 		yVel = 0;
 		ballY = 9;
 		ballsScored = 0;
@@ -938,21 +1087,16 @@ void level_bucketDrop(int bucketSpeed, int numBalls) {
 	//Bucket Position
 	int speedDivisor = 16;
 	speedDivisor -= (5 * ballsScored);
-	int animationFrame = (stateCounter / speedDivisor) % 14;
+	int animationFrame = (levelFrameNum / speedDivisor) % 14;
 	int bucketPosition = animationFrame;	//Frames 1-7 we just use the regular frame
 	if (animationFrame > 7) { bucketPosition = 14-animationFrame; }	//Frames 8-13 we move the opposite way
 	bucketPosition += 1; //Shift 1 to the right
 
-	uint8_t currentButtonState = !HAL_GPIO_ReadPin(BUTTON_GPIO_Port, BUTTON_Pin);
-
 	//Fire the ball when the button is pressed
-	if (currentButtonState && !lastButtonState && applyGravity == 0) {
+	if (buttonPressed && applyGravity == 0) {
 		yVel = 1;	//Initial velocity
 		applyGravity = 1;
 	}
-
-	lastButtonState = currentButtonState;
-
 
 	//If activated, apply gravity.
 	if (applyGravity) {
@@ -969,7 +1113,7 @@ void level_bucketDrop(int bucketSpeed, int numBalls) {
 	//Lose if ball is dropped
 	if (ballY < 0 || ballY > 29) {
 		 gameState = 3;	//Loser stage
-		 stateCounter = 0;
+		 levelFrameNum = 0;
 		 return;
 	}
 
@@ -1020,7 +1164,7 @@ void level_bucketDrop(int bucketSpeed, int numBalls) {
 			if (ballsScored >= numBalls) {
 				if (bucketPosition == 4) {
 					gameState = 2;	//Winner stage
-					stateCounter = 0;
+					levelFrameNum = 0;
 				}
 			}
 		}
@@ -1031,7 +1175,7 @@ void level_bucketDrop(int bucketSpeed, int numBalls) {
 	//The "Slot" is at bucketPosition X, and y=1
 	//if (ballY == 1 && bucketPosition == 4) {
 	//	gameState = 2;	//Winner stage
-	//	stateCounter = 0;
+	//	levelFrameNum = 0;
 	//}
 
 	  //Draw the ball
