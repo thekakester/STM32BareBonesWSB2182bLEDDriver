@@ -51,15 +51,20 @@ uint8_t spiBuff[(300*9)+2];	//Each LED uses 9 bytes of info.  pad 1 byte on both
 
 double theta = 0;	//Used for animating the lights
 
-int level = 19;		//Starting level
+int level = 13;		//Starting level
 
 int currentLevelSelection = 0;	//Used for level select page
 int maxLevel = 19;	//The highest level that can be selected during level select
+const int startingLives = 20;		//Fixed number.  How many lives you start with at the beginning of the game
+int livesRemaining = startingLives;	//After these are used up, you lose!
+int livesDelta = 0;					//How much to adjust lives by on the level display screen animation
+int livesGainedOnPerfectLevel = 3;	//If you don't mess up, gain this many lives
 
 int gameState = 0;	//0= Display Level
 int levelFrameNum = 0;	//Increments with each frame, reset when game state changes
 int prevTarget = 0;
 int cheated = 0;		//Cheating is when you do level select.  If you win while cheating, the victory screen shows red
+int levelAttempts = 0;	//How many times did the player try to beat this level?
 
 int target = 0;	//Current moving pixel
 uint8_t targetIsLinear = 0;	//Show target as a bar on the loser screen
@@ -218,14 +223,16 @@ int main(void)
 	  levelFrameNum++;
 
 	  //Reset the game when the button is idle for too long
-	  buttonIdleCounter++;
+	  //Don't advance on level display, winner, or loser screens though
+	  //Don't punish people for watching the animations :)
+	  if (gameState != 2 && gameState != 3 && gameState != 5) {
+		  buttonIdleCounter++;
+	  }
+
+	  //If they haven't pressed the button in a while, reset the game
 	  if (buttonDown) { buttonIdleCounter = 0; }
-	  if (buttonIdleCounter > 1000) {
-		  buttonIdleCounter = 0;
-		  gameState = 0;
-		  levelFrameNum = 0;
-		  level = 0;
-		  cheated = 0;
+	  if (buttonIdleCounter > 1200) {
+		  resetGame();
 	  }
 
 
@@ -416,6 +423,18 @@ void winnerState() {
 		setColorMonotonic(i,0,64,0);
 	}
 
+	//If perfect round, draw blue border
+	if (levelAttempts == 0) {
+		for (int x = 0; x < 10; x++) {
+			setPxColor(x,0,0,0,32);	//Bottom border
+			setPxColor(x,29,0,0,32);	//Top border
+		}
+		for (int y = 0; y < 30; y++) {
+			setPxColor(0,y,0,0,32);		//Left border
+			setPxColor(9,y,0,0,32);		//Right border
+		}
+	}
+
 	if (levelFrameNum > 50) {
 		for (int i = 0; i < (levelFrameNum - 50)*3; i++) {
 			setColorMonotonic(i,0,0,0);
@@ -427,14 +446,39 @@ void winnerState() {
 		theta = 0;	//Make sure they can't just hold down the button to win
 		gameState = 0;	//Level display (next level)
 		levelFrameNum = 0;	//Reset state counter
+
+		//Did they get it on their first try?  Give bonus levels
+		livesDelta = 0;
+		if (levelAttempts == 0) {
+			livesDelta += livesGainedOnPerfectLevel;
+		}
+
+		levelAttempts = 0;	//Reset level attempt counter
 	}
+}
+
+//Start the game over
+void resetGame() {
+	buttonIdleCounter = 0;
+	gameState = 0;
+	levelFrameNum = 0;
+	level = 0;
+	cheated = 0;
+	livesRemaining = startingLives;
+	livesDelta = 0;
+	levelAttempts = 0;
 }
 
 void loserState() {
 
-	//Flash red border lights
-	uint8_t red = 32;
-	if (levelFrameNum % 50 < 10) { red = 0; }
+	int red = 32;
+	//if (levelFrameNum % 50 < 10) { red = 0; }	//Flash border lights
+
+	//Fade red away during frames 75->100
+	if (levelFrameNum > 75) {
+		red -= (levelFrameNum - 75) * 2;
+		if (red < 0) { red = 0; }
+	}
 
 	//Clear the screen
 	for (int i = 0; i < 300; i++) {
@@ -452,6 +496,11 @@ void loserState() {
 	}
 
 	//Show goal and target pixels/lines
+	if (goal < 0)     { goal   = 0; }
+	if (goal > 299)   { goal   = 299; }
+	if (target < 0)   { target = 0; }
+	if (target > 299) { target = 299; }
+
 	if (targetIsLinear) {
 		//Show target and goal as a line that goes across the screen
 		for (int x = 1; x < 9; x++) {
@@ -475,10 +524,14 @@ void loserState() {
 		levelFrameNum += 2;	//Go 3x the speed if user is holding button
 	}
 
-	if (levelFrameNum >= 50*3) {
+	//End of animation.  Move on to level display
+	if (levelFrameNum >= 100) {
+		livesDelta = -1;	//Lose one life on the next screen
+
 		//level = 0;
 		gameState = 0;	//Level Display
 		levelFrameNum = 0;	//Reset level frame counter
+		levelAttempts++;	//Used for deciding if we should award bonus lives
 	}
 
 
@@ -501,12 +554,12 @@ void loserState() {
 
 void levelDisplay() {
 
-	//Level display takes 10 frames per level, plus 70 frames
-	int frameTime = (10*level) + 150;
+	//Level display takes 100 frames to show lives, 10 frames per level, plus 150 frames pause
+	int frameTime = 100 + (10*level) + 150;
 
 	int lightupAmount = 0;	//Extra light up amount for when the user holds the button
 
-	//Start the level
+	//Start the level after the animation is done
 	if (levelFrameNum >= frameTime) {
 
 		//Wait for button to be unpressed
@@ -519,11 +572,24 @@ void levelDisplay() {
 			lightupAmount = 32;	//Make the pixels a different color to show we're ready for the next
 		}
 
+		//Adjust number of lives
+		livesRemaining += livesDelta;
+		livesDelta = 0;
+
+		//PLAYER LOST THE GAME!  Restart at first level
+		if (livesRemaining <= 0) {
+			level = 0;
+			livesRemaining = startingLives;
+			levelFrameNum = 0;	//Reset frame counter (show level select again)
+			return;
+		}
+
 		//Reset level select counter
 		levelSelectButtonPress = 0;
 
+
 		//Reset target and goal
-		target = 0;;
+		target = 0;
 		goal = 0;
 		targetIsLinear = 0;		//Display loser state as a BAR instead of dot
 		targetIsMonotonic = 0;	//Display target using monotonic coordinate system instead of zig-zag
@@ -535,20 +601,96 @@ void levelDisplay() {
 		setColor(i,0,0,0);
 	}
 
-	//Draw the level
-	for (int i = 0; i <= level; i++) {
-		int xi = (i % 5) * 2;
-		int yi = (i / 5) * 2;
 
-		//Each level dot shows up 10 frames after the previous
-		int brightness = levelFrameNum - (i*10);
-		if (brightness < 0) { brightness = 0; }
-		if (brightness > 255) { brightness = 255; }
+	//Draw lives remaining at the bottom of the screen
+	for (int i = 0; i < livesRemaining; i++) {
+		int x = i % 10;
+		int y = 29 - (i / 10);
 
-		int x = xi + 1;
-		int y = yi + 12;
-		int pixel = (x * 30) + y;
-		setColorMonotonic(pixel,brightness,lightupAmount,brightness);
+		int brightness = levelFrameNum;
+		if (levelFrameNum > 32) { brightness = 32; }
+
+		//Show lives as yellow pixels
+		setPxColor(x,y,brightness,brightness,0);
+	}
+
+	//Show animation for missing lives
+	if (livesDelta < 0) {
+		//Loop over each life lost
+		for (int delta = -1; delta >= livesDelta; delta--) {
+			int i = livesRemaining + delta;
+			if (i < 0) { break; }
+
+			int x = i % 10;
+			int y = 29-(i / 10);
+
+			//Black out the life we already made yellow
+			setPxColor(x,y,0,0,0);
+
+			//Draw in the animation of it disappearing
+			int animationFrame = levelFrameNum - 20;
+
+			//In case we're losing more than 1 life, separate them by a few frames
+			animationFrame += delta * 10; //Reminder: Delta is negative
+			if (animationFrame < 0) { animationFrame = 0; }
+
+			int brightness = 32 - animationFrame;
+			if (brightness < 0) { brightness = 0; }
+
+			y -= (animationFrame / 5);
+			//Smallest y allowed is 15
+			if (y < 15) { y = 15; }
+
+			setPxColor(x,y,brightness,0,0);	//Draw the new pixel in red
+		}
+	}
+
+	//Show animation for new lives
+	if (livesDelta > 0) {
+		//Loop over each life gained
+		for (int delta = 0; delta < livesDelta; delta++) {
+			int i = livesRemaining + delta;
+
+			int x = i % 10;
+			int y = 29-(i / 10);
+
+			//Draw in the animation of it appearing
+			int animationFrame = levelFrameNum - 20;
+
+			//In case we're losing more than 1 life, separate them by a few frames
+			animationFrame -= delta * 10;
+			if (animationFrame < 0) { animationFrame = 0; }
+
+			int brightness = animationFrame;
+			if (brightness > 32) { brightness = 32; }
+
+			int yDelta = ((32 - animationFrame) / 5);	//Move up over the course of 32 frames
+			if (yDelta < 0) { yDelta = 0; }
+
+			y -= yDelta;
+
+			setPxColor(x,y,0,0,brightness);	//Draw the new pixel in blue
+		}
+	}
+
+	//Draw the level (only if we have lives remaining)
+	//Don't draw anything until frame 50
+	if (livesRemaining > 0 && levelFrameNum > 100) {
+		int animationFrame = levelFrameNum - 100;
+		for (int i = 0; i <= level; i++) {
+			int xi = (i % 5) * 2;
+			int yi = (i / 5) * 2;
+
+			//Each level dot shows up 10 frames after the previous
+			int brightness = animationFrame - (i*10);
+			if (brightness < 0) { brightness = 0; }
+			if (brightness > 255) { brightness = 255; }
+
+			int x = 1 + xi;
+			int y = 14 - yi;
+			int pixel = (x * 30) + y;
+			setColorMonotonic(pixel,brightness,lightupAmount,brightness);
+		}
 	}
 
 	//If the button is held, show the level faster
@@ -720,9 +862,9 @@ void playGame() {
 	  case 6:
 		  level_dropBombs(0.05,8,0); break;	//Drop bombs (8x)
 	  case 7:
-		  level_snake(100,64); break;
+		  level_snake(8,64); break;
 	  case 8:
-		  level_snake(100,120); break;
+		  level_snake(8,120); break;
 	  case 9:
 		  level_bucketDrop(1,1);break;
 	  case 10:
@@ -740,7 +882,7 @@ void playGame() {
 	  case 16:
 		  level_fillTheScreen(5); break;
 	  case 17:
-		  level_snake(30,120); break;
+		  level_snake(3,120); break;
 	  case 18:
 		  level_bucketDrop(1,3);break;
 	  default:
@@ -834,7 +976,7 @@ void level_singleDot(double thetaSpeed, uint8_t moveGoal) {
 }
 
 void level_crissCross(double thetaSpeed) {
-	  goal = (int)4 *sin(theta*3.7);	//Move the goal left and right
+	  int goalDelta = (int)4 *sin(theta*3.7);	//Move the goal left and right
 	  target = (int)(HALFBOARDSIZE * sin(theta)) + HALFBOARDSIZE;
 
 	  //Clear the gameboard
@@ -842,20 +984,20 @@ void level_crissCross(double thetaSpeed) {
 		  setColor(i,0,0,0);//Clear board
 	  }
 
-	  int goalPixel = 120+15;	//Center starting point
-	  goalPixel += 30 * goal;
+	  goal = 120+15;	//Center starting point
+	  goal += 30 * goalDelta;
 
-	  int targetPixel = 120 + target;
+	  target += 120;
 
 	  //Draw goal dot
-	  setColor(goalPixel,64,64,64);
+	  setColor(goal,64,64,64);
 
 	  //Draw target pixel
-	  setColor(targetPixel,0,0,255);
+	  setColor(target,0,0,255);
 
 	  //Check button press for levels 4+
 	  if (buttonDown) {
-		  if (targetPixel == goalPixel) {
+		  if (target == goal) {
 			  gameState = 2;	//Winner stage
 			  levelFrameNum = 0;
 		  } else {
@@ -890,7 +1032,6 @@ void level_fillTheScreen(int pixelsPerFrame) {
 		  setColor(goal,64,64,64);
 	  }
 
-	  if (theta > 299) { theta = 0; }
 
 	  //Check button press for levels 4+
 	  if (buttonDown) {
@@ -903,6 +1044,7 @@ void level_fillTheScreen(int pixelsPerFrame) {
 		  }
 	  } else {
 		  theta += pixelsPerFrame;
+		  while (theta >= 300) { theta -= 300; }
 	  }
 }
 
@@ -917,21 +1059,24 @@ void level_dropBombs(double thetaSpeed, int goalBombs, uint8_t manyStarterBombs)
 			bombPositions[i] = 0;
 		}
 
-		bombPositions[11] = 1;
+		bombPositions[6]  = 1;
+		bombPositions[10] = 1;
 		bombPositions[14] = 1;
-		bombPositions[17] = 1;
+		bombPositions[18] = 1;
+		bombPositions[22] = 1;
 
 		bombsPlanted = 0;
 
 		if (manyStarterBombs) {
-			bombPositions[1] = 1;
+			bombPositions[0] = 1;
+			bombPositions[2] = 1;
 			bombPositions[4] = 1;
-			bombPositions[7] = 1;
-			bombPositions[10] = 1;
+			bombPositions[8] = 1;
+			bombPositions[12] = 1;
 			bombPositions[16] = 1;
-			bombPositions[19] = 1;
-			bombPositions[22] = 1;
-			bombPositions[25] = 1;
+			bombPositions[20] = 1;
+			bombPositions[24] = 1;
+			bombPositions[26] = 1;
 			bombPositions[28] = 1;
 		}
 	}
@@ -1005,40 +1150,46 @@ void level_snake(int speed, int goalScore) {
 
 
 	//Fill in previous position
-	gameboard[(snakeX * 30) + snakeY] = 1;
+	if (snakeX >= 0 && snakeX < 10 && snakeY >= 0 && snakeY < 30) {
+		gameboard[(snakeX * 30) + snakeY] = 1;
+	}
 
 	//Move
-	switch(snakeDir) {
-		case 0:
-			snakeY++; break;
-		case 1:
-			snakeX++; break;
-		case 2:
-			snakeY--; break;
-		case 3:
-			snakeX--; break;
-	}
+	if (levelFrameNum % speed == 0) {
+		switch(snakeDir) {
+			case 0:
+				snakeY++; break;
+			case 1:
+				snakeX++; break;
+			case 2:
+				snakeY--; break;
+			case 3:
+				snakeX--; break;
+		}
 
-	snakeLength++;
-	target = (snakeX*30) + snakeY;	//Calculate snake position
-	targetIsMonotonic = 1;			//Use monotonic coordinate system for loser screen
+		snakeLength++;
+
+		target = (snakeX*30) + snakeY;	//Calculate snake position
+		targetIsMonotonic = 1;			//Use monotonic coordinate system for loser screen
 
 
-	if (snakeX < 0 || snakeX > 9 || snakeY < 2 || snakeY > 27) {
-		gameState = 3;	//Loser stage
-		levelFrameNum = 0;
-	}
+		if (snakeX < 0 || snakeX > 9 || snakeY < 2 || snakeY > 27) {
+			gameState = 3;	//Loser stage
+			levelFrameNum = 0;
+			return;
+		}
 
-	//If you hit your own self
-	if (gameboard[(snakeX*30) + snakeY] == 1) {
-		gameState = 3;	//Loser stage
-		levelFrameNum = 0;
-	}
+		//If you hit your own self
+		if (gameboard[(snakeX*30) + snakeY] == 1) {
+			gameState = 3;	//Loser stage
+			levelFrameNum = 0;
+		}
 
-	//If you moved enough
-	if (snakeLength >= goalScore) {
-		gameState = 2;	//Winner stage
-		  levelFrameNum = 0;
+		//If you moved enough
+		if (snakeLength >= goalScore) {
+			gameState = 2;	//Winner stage
+			  levelFrameNum = 0;
+		}
 	}
 
 	  //Display the gameboard
@@ -1069,7 +1220,6 @@ void level_snake(int speed, int goalScore) {
 
 	  //Draw cursor
 	  setColorMonotonic(target,0,0,64);
-	  HAL_Delay(speed);
 }
 
 void level_bucketDrop(int bucketSpeed, int numBalls) {
