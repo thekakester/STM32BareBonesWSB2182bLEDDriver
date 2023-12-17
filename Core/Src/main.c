@@ -55,7 +55,7 @@ int level = 13;		//Starting level
 
 int currentLevelSelection = 0;	//Used for level select page
 int maxLevel = 19;	//The highest level that can be selected during level select
-const int startingLives = 20;		//Fixed number.  How many lives you start with at the beginning of the game
+const int startingLives = 3;		//Fixed number.  How many lives you start with at the beginning of the game
 int livesRemaining = startingLives;	//After these are used up, you lose!
 int livesDelta = 0;					//How much to adjust lives by on the level display screen animation
 int livesGainedOnPerfectLevel = 3;	//If you don't mess up, gain this many lives
@@ -214,6 +214,9 @@ int main(void)
 		  break;
 	  case 6:
 		  levelSelect();
+		  break;
+	  case 7:
+		  lostTheGame();
 		  break;
 	  default:
 		  gameState = 5;	//Start on level display if we ever get an error
@@ -419,9 +422,7 @@ static void MX_GPIO_Init(void)
 /* USER CODE BEGIN 4 */
 
 void winnerState() {
-	for (int i = 0; i < 300; i++) {
-		setColorMonotonic(i,0,64,0);
-	}
+	clearScreen(0,64,0);	//Fill screen green
 
 	//If perfect round, draw blue border
 	if (levelAttempts == 0) {
@@ -481,9 +482,7 @@ void loserState() {
 	}
 
 	//Clear the screen
-	for (int i = 0; i < 300; i++) {
-		setColor(i,0,0,0);
-	}
+	clearScreen();
 
 	for (int x = 0; x < 10; x++) {
 		setPxColor(x,0,red,0,0);	//Bottom border
@@ -504,8 +503,8 @@ void loserState() {
 	if (targetIsLinear) {
 		//Show target and goal as a line that goes across the screen
 		for (int x = 1; x < 9; x++) {
-			setColorMonotonic((x*30) + goal,64,64,64);
-			setColorMonotonic((x*30) + target,0,0,64);
+			setPxColor(x,goal,64,64,64);
+			setPxColor(x,target,0,0,64);
 		}
 	} else {
 		//Show target and goal as a single pixel
@@ -520,9 +519,9 @@ void loserState() {
 		}
 	}
 
-	if (buttonDown) {
-		levelFrameNum += 2;	//Go 3x the speed if user is holding button
-	}
+	//if (buttonDown) {
+	//	levelFrameNum += 2;	//Go 3x the speed if user is holding button
+	//}
 
 	//End of animation.  Move on to level display
 	if (levelFrameNum >= 100) {
@@ -578,7 +577,7 @@ void levelDisplay() {
 
 		//PLAYER LOST THE GAME!  Restart at first level
 		if (livesRemaining <= 0) {
-			level = 0;
+			gameState = 7;	//Lost the game state
 			livesRemaining = startingLives;
 			levelFrameNum = 0;	//Reset frame counter (show level select again)
 			return;
@@ -595,12 +594,7 @@ void levelDisplay() {
 		targetIsMonotonic = 0;	//Display target using monotonic coordinate system instead of zig-zag
 	}
 
-
-	//Clear the screen
-	for (int i = 0; i < 300; i++) {
-		setColor(i,0,0,0);
-	}
-
+	clearScreen(0,0,0);
 
 	//Draw lives remaining at the bottom of the screen
 	for (int i = 0; i < livesRemaining; i++) {
@@ -688,8 +682,7 @@ void levelDisplay() {
 
 			int x = 1 + xi;
 			int y = 14 - yi;
-			int pixel = (x * 30) + y;
-			setColorMonotonic(pixel,brightness,lightupAmount,brightness);
+			setPxColor(x,y,brightness,lightupAmount,brightness);
 		}
 	}
 
@@ -713,14 +706,12 @@ void levelSelect() {
 	}
 
 	//Clear screen
-	for (int i = 0; i < 300; i++) {
-		setColor(i,0,0,0);
-	}
+	clearScreen(0,0,0);
 
 	//Draw purple border
 	for (int x = 0; x < 10; x++) {
-		setColorMonotonic((x*30) + 0 ,16,0,16);
-		setColorMonotonic((x*30) + 29,16,0,16);
+		setPxColor(x,0 ,16,0,16);
+		setPxColor(x,29,16,0,16);
 	}
 
 	//Do nothing for first 50 frames.  Just show border
@@ -754,7 +745,7 @@ void levelSelect() {
 
 		int x = 2 + xi;
 		int y = 12 + yi;
-		setColorMonotonic((x*30) + y,r,g,b);
+		setPxColor(x,y,r,g,b);
 	}
 
 	//After inactivity.  Start the level
@@ -814,22 +805,30 @@ void beatTheGame() {
 		//Show 5 rows of red on the top and bottom
 		for (int y = 0; y < 5; y++) {
 			for (int x = 0; x < 10; x++) {
-				setColorMonotonic((x*30)+y,16,0,0);
+				setPxColor(x,y,16,0,0);
 			}
 		}
 		for (int y = 25; y < 30; y++) {
 			for (int x = 0; x < 10; x++) {
-				setColorMonotonic((x*30)+y,16,0,0);
+				setPxColor(x,y,16,0,0);
 			}
 		}
 	}
 
 	//If they waited long enough and beat the game, restart
 	if (levelFrameNum >= 200 && buttonDown) {
-		level = 0;
-		gameState = 0;
-		levelFrameNum = 0;
-		cheated = 0;
+		resetGame();
+	}
+
+}
+
+void lostTheGame() {
+
+	clearScreen(32,0,0);	//Fill screen red
+
+	//If they waited long enough and beat the game, restart
+	if (levelFrameNum >= 200 && buttonDown) {
+		resetGame();
 	}
 
 }
@@ -964,9 +963,7 @@ void level_singleDot(double thetaSpeed, uint8_t moveGoal) {
 	  }
 
 	  //Level 4+ uses entire gameboard
-	  for (int i = 0; i < 300; i++) {
-		  setColor(i,0,0,0);//Clear board
-	  }
+	  clearScreen(0,0,0);
 
 	  //Draw center dot
 	  setColor(goal,64,64,64);
@@ -980,9 +977,7 @@ void level_crissCross(double thetaSpeed) {
 	  target = (int)(HALFBOARDSIZE * sin(theta)) + HALFBOARDSIZE;
 
 	  //Clear the gameboard
-	  for (int i = 0; i < 300; i++) {
-		  setColor(i,0,0,0);//Clear board
-	  }
+	  clearScreen(0,0,0);
 
 	  goal = 120+15;	//Center starting point
 	  goal += 30 * goalDelta;
@@ -1024,7 +1019,7 @@ void level_fillTheScreen(int pixelsPerFrame) {
 		  if (i <= target) {
 			  blue = 32;
 		  }
-		  setColor(i,0,blue,blue);//Clear board
+		  setColor(i,0,blue,blue);
 	  }
 
 	  //Draw the goal pixel (only if we're not on it)
@@ -1068,16 +1063,9 @@ void level_dropBombs(double thetaSpeed, int goalBombs, uint8_t manyStarterBombs)
 		bombsPlanted = 0;
 
 		if (manyStarterBombs) {
-			bombPositions[0] = 1;
-			bombPositions[2] = 1;
-			bombPositions[4] = 1;
-			bombPositions[8] = 1;
-			bombPositions[12] = 1;
-			bombPositions[16] = 1;
-			bombPositions[20] = 1;
-			bombPositions[24] = 1;
-			bombPositions[26] = 1;
-			bombPositions[28] = 1;
+			for (int i = 0; i < 30; i+=2) {
+				bombPositions[i] = 1;
+			}
 		}
 	}
 
@@ -1206,15 +1194,15 @@ void level_snake(int speed, int goalScore) {
 	  for (int x = 0; x < 10; x++) {
 		  if (x >= progress) {
 			  //Red
-			  setColorMonotonic((x * 30)+29,32,0,0);	//Top Row
-			  setColorMonotonic((x * 30)+28,32,0,0);	//Second-from-top row
-			  setColorMonotonic((x * 30)+0,32,0,0);		//Bottom Row
-			  setColorMonotonic((x * 30)+1,32,0,0);		//Second Row
+			  setPxColor(x,29,32,0,0);	//Top Row
+			  setPxColor(x,28,32,0,0);	//Second-from-top row
+			  setPxColor(x,0,32,0,0);		//Bottom Row
+			  setPxColor(x,1,32,0,0);		//Second Row
 		  } else {
-			  setColorMonotonic((x * 30)+29,0,32,0);	//Top Row
-			  setColorMonotonic((x * 30)+28,0,32,0);	//Second-from-top r
-			  setColorMonotonic((x * 30)+0,0,32,0);		//Bottom Row
-			  setColorMonotonic((x * 30)+1,0,32,0); 	//Second Row
+			  setPxColor(x,29,0,32,0);	//Top Row
+			  setPxColor(x,28,0,32,0);	//Second-from-top r
+			  setPxColor(x,0,0,32,0);		//Bottom Row
+			  setPxColor(x,1,0,32,0); 	//Second Row
 		  }
 	  }
 
@@ -1269,9 +1257,7 @@ void level_bucketDrop(int bucketSpeed, int numBalls) {
 
 
 	//Clear the screen
-	for (int i = 0; i < 300; i++) {
-		setColor(i,0,0,0);
-	}
+	clearScreen(0,0,0);
 
 	//Draw the bucket
 	setPxColor(bucketPosition-1,0,32,32,32);
@@ -1332,6 +1318,12 @@ void level_bucketDrop(int bucketSpeed, int numBalls) {
 	  setPxColor(4,(int)ballY,0,0,64);
 }
 
+void clearScreen(uint8_t r, uint8_t g, uint8_t b) {
+	for (int i = 0; i < 300; i++) {
+		setColor(i,r,g,b);
+	}
+}
+
 /* HELPER METHOD: Don't call this directly
  * Use "setColor() instead"
  *
@@ -1386,6 +1378,7 @@ void setColor(int ledNumber, uint8_t red, uint8_t green, uint8_t blue) {
 
 /*Same as set color, but it accounts for our 2D board to make sure that pixel numbers go top down
  * instead of snaking
+ *
  */
 void setColorMonotonic(int ledNumber, uint8_t red, uint8_t green, uint8_t blue) {
 	//Directly write this to our SPI buffer.
