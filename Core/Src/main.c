@@ -412,6 +412,10 @@ void winnerState() {
 			livesDelta += livesGainedOnPerfectLevel;
 		}
 
+		if (levelAttempts == 1) {
+			livesDelta += 1;
+		}
+
 		levelAttempts = 0;	//Reset level attempt counter
 	}
 }
@@ -644,6 +648,11 @@ void levelDisplay() {
 		}
 	}
 
+	//Cheating indicator
+	if (cheated) {
+		setColor(299,64,0,0);
+	}
+
 	//If the button is held, show the level faster
 	if (buttonDown) {
 		levelFrameNum += 4;	//Advance 5x as fast
@@ -784,6 +793,11 @@ void lostTheGame() {
 
 	clearScreen(32,0,0);	//Fill screen red
 
+	//Cheating indicator
+	if (cheated) {
+		setColor(299,0,64,0);
+	}
+
 	//If they waited long enough and beat the game, restart
 	if (levelFrameNum >= 200 && buttonDown) {
 		resetGame();
@@ -811,13 +825,13 @@ void playGame() {
 	  case 2:
 		  level_bars(0.1); break;			//Fast bar
 	  case 3:
-		  level_singleDot(0.005,0); break;	//Single pixel, slow
+		  level_singleDot(0.003,0); break;	//Single pixel, slow
 	  case 4:
-		  level_fillTheScreen(1); break;	//Fill the screen, slow
-	  case 5:
 		  level_dropBombs(0.02,3,0); break;	//Drop bombs (3x)
-	  case 6:
+	  case 5:
 		  level_dropBombs(0.05,8,0); break;	//Drop bombs (8x)
+	  case 6:
+	  		level_fillTheScreen(0.5); break;	//Fill the screen, slow
 	  case 7:
 		  level_snake(8,64); break;
 	  case 8:
@@ -827,19 +841,19 @@ void playGame() {
 	  case 10:
 		  level_bucketDrop(1,2);break;
 	  case 11:
-		  level_singleDot(0.015,0); break;	//Stationary goal, really fast single pixel
-	  case 12:
-		  level_fillTheScreen(3); break;
-	  case 13:
 		  level_crissCross(0.02); break;	//Criss cross
-	  case 14:
-		  level_singleDot(0.015,1); break;	//Moving goal
-	  case 15:
+	  case 12:
+		  level_singleDot(0.015,0); break;	//Stationary goal, really fast single pixel
+	  case 13:
 		  level_dropBombs(0.05,5,1); break;
+	  case 14:
+		  level_fillTheScreen(2.0); break;
+	  case 15:
+		  level_singleDot(0.015,1); break;	//Moving goal
 	  case 16:
-		  level_fillTheScreen(5); break;
-	  case 17:
 		  level_snake(3,120); break;
+	  case 17:
+		  level_fillTheScreen(3.0); break;
 	  case 18:
 		  level_bucketDrop(1,3);break;
 	  default:
@@ -883,7 +897,7 @@ void level_bars(double thetaSpeed) {
 
 void level_singleDot(double thetaSpeed, uint8_t moveGoal) {
 	goal = 150+15;
-	  target = 150 + (int)(150*sin(theta));
+	  target = 150 + (int)(60*sin(theta));
 
 	  //Special case: Goal moves
 	  if (moveGoal) {
@@ -962,14 +976,22 @@ void level_crissCross(double thetaSpeed) {
 	  }
 }
 
-void level_fillTheScreen(int pixelsPerFrame) {
-	goal = 299;
+void level_fillTheScreen(double pixelsPerFrame) {
 
-	//Make sure the goal is divisible by our movement speed
-	goal /= pixelsPerFrame;
-	goal *= pixelsPerFrame;
+	if (levelFrameNum == 1) {
+		goal = 299;
 
-	  target = theta;
+		double multiplier = pixelsPerFrame;
+		while (multiplier < 1) { multiplier *= 2; }
+
+		//Make sure the goal is divisible by our movement speed
+
+		goal /= multiplier;	//Int math
+		goal *= multiplier;	//Int math
+	}
+
+
+	target = (int)theta;
 
 	  //Draw the line of blue as it grows.  Anything after blue is blank
 	  for (int i = 0; i < 300; i++) {
@@ -1021,8 +1043,8 @@ void level_dropBombs(double thetaSpeed, int goalBombs, uint8_t manyStarterBombs)
 		bombsPlanted = 0;
 
 		if (manyStarterBombs) {
-			for (int i = 0; i < 30; i+=2) {
-				bombPositions[i] = 1;
+			for (int i = 0; i < 30; i++) {
+				bombPositions[i] = (i % 3) == 0;
 			}
 		}
 	}
