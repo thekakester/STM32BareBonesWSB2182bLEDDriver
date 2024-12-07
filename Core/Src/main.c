@@ -46,6 +46,8 @@ DMA_HandleTypeDef hdma_spi1_tx;
 
 /* USER CODE BEGIN PV */
 uint8_t spiBuff[(300*9)+2];	//Each LED uses 9 bytes of info.  pad 1 byte on both ends to make sure everything starts and ends with 0
+volatile uint8_t dmaTransferComplete = 1;	//If 0, we're in the middle of a transmission
+uint8_t debugColor = 0;
 
 double theta = 0;	//Used for animating the lights
 
@@ -63,6 +65,7 @@ int levelFrameNum = 0;	//Increments with each frame, reset when game state chang
 int prevTarget = 0;
 int cheated = 0;		//Cheating is when you do level select.  If you win while cheating, the victory screen shows red
 int levelAttempts = 0;	//How many times did the player try to beat this level?
+uint32_t pseudoRandomSeed = 1;
 
 int target = 0;	//Current moving pixel
 uint8_t targetIsLinear = 0;	//Show target as a bar on the loser screen
@@ -106,11 +109,13 @@ static void MX_GPIO_Init(void);
 static void MX_DMA_Init(void);
 static void MX_SPI1_Init(void);
 /* USER CODE BEGIN PFP */
+uint32_t pseudoRand();
 void appendByte(uint8_t* buff, uint32_t offset, uint8_t data);
 void setColor(int, uint8_t,uint8_t,uint8_t);
 void setColorMonotonic(int, uint8_t,uint8_t,uint8_t);
 void setPxColor(int, int, uint8_t, uint8_t, uint8_t);
 void transmit();
+void HAL_SPI_TxCpltCallback(SPI_HandleTypeDef *hspi);
 
 /* USER CODE END PFP */
 
@@ -170,23 +175,10 @@ int main(void)
 	  if (g < 0) { g = 0; }
 	  if (b < 0) { b = 0; }
 
-
-	  /*uint32_t distance = (uint32_t)(theta * 3 + (6 * sin(theta)));
-
-	  //Set the color of every LED to create a basic animation
-	  for (int i = 0; i < 300; i++) {
-		  //Every 10th LED is on, all the rest are off
-		  if (i % 10 == distance % 10) {
-			  setColor(i,r,g,b);	//Light purple color
-		  } else {
-			  setColor(i,0,0,0);
-		  }
-	  }*/
-
 	  //Calculate button down and button pressed
 	  buttonDown = !HAL_GPIO_ReadPin(BUTTON_GPIO_Port, BUTTON_Pin);
 	  buttonPressed = buttonDown && !prevButtonDown;
-	  prevButtonDown = buttonDown;	//Used for calculating next loop
+	  prevButtonDown = buttonDown;	//Used for calculating next loop*/
 
 	  switch (gameState) {
 	  case 1:
@@ -232,6 +224,10 @@ int main(void)
 
 
 	  transmit();	//Send out our LED data to the LEDs so they actually light up
+	  HAL_Delay(10);
+
+
+
 
     /* USER CODE END WHILE */
 
@@ -394,9 +390,25 @@ void winnerState() {
 		}
 	}
 
-	if (levelFrameNum > 50) {
+	//After 50 frames, clear the screen pixel by pixel
+	/*if (levelFrameNum > 50) {
 		for (int i = 0; i < (levelFrameNum - 50)*3; i++) {
 			setColorMonotonic(i,0,0,0);
+		}
+	}*/
+
+	//After 30 frames, make the screen sparkle
+	if (levelFrameNum > 30) {
+		//Frame 30 = 100% solid, frame 150 = 0% solid
+		int percentVisible = levelFrameNum - 30;
+		percentVisible = (percentVisible * 100) / (150-30); //Returns 0-100 int
+
+		for (int i = 0; i < 300; i++) {
+			if (pseudoRand() % 100 > percentVisible) {
+				setColor(i,0,64,0);
+			} else {
+				setColor(i,0,0,0);
+			}
 		}
 	}
 
@@ -480,6 +492,8 @@ void loserState() {
 			setColor(target,0,0,64);
 		}
 	}
+
+
 
 	//if (buttonDown) {
 	//	levelFrameNum += 2;	//Go 3x the speed if user is holding button
@@ -1298,6 +1312,11 @@ void level_bucketDrop(int bucketSpeed, int numBalls) {
 	  setPxColor(4,(int)ballY,0,0,64);
 }
 
+uint32_t pseudoRand() {
+		pseudoRandomSeed = (pseudoRandomSeed * 1103515245 + 12345) & 0x7FFFFFFF; // Standard LCG formula
+	    return pseudoRandomSeed;
+}
+
 void clearScreen(uint8_t r, uint8_t g, uint8_t b) {
 	for (int i = 0; i < 300; i++) {
 		setColor(i,r,g,b);
@@ -1393,7 +1412,14 @@ void transmit() {
 
 	//Transmit buffer over SPI
 	while (HAL_SPI_GetState(&hspi1) != HAL_SPI_STATE_READY) {}	//Busy wait if the previous SPI transmit is still running
+	while (dmaTransferComplete == 0) {}	//Busy wait until previous transmission completes
+	dmaTransferComplete = 0;	//Gets set to 1 by DMA Complete callback
 	HAL_SPI_Transmit_DMA(&hspi1, spiBuff, sizeof(spiBuff));
+}
+
+void HAL_SPI_TxCpltCallback(SPI_HandleTypeDef *hspi) {
+	dmaTransferComplete = 1;
+	debugColor = 100;
 }
 
 /* USER CODE END 4 */
