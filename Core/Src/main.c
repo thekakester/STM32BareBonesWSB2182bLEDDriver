@@ -1335,7 +1335,7 @@ void level_stacker(int startingLayers, int initialWidth, uint8_t moveSpeed, uint
 		int16_t endX = startX+stackerRowWidth[target]-1;
 
 		int16_t prevStartX = stackerRowOffset[target-1];
-		int16_t prevEndX = prevStartX+stackerRowWidth[target]-1;
+		int16_t prevEndX = prevStartX+stackerRowWidth[target-1]-1;
 
 		//Calculate how many pixels are hanging off on the left side
 		int leftOverhang = prevStartX - startX;
