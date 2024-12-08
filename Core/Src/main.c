@@ -876,7 +876,7 @@ void playGame() {
 	  case 8:
 		  level_stacker(8,5,10,1,10); break;
 	  case 9:
-		  level_stacker(8,4,10,100,10); break;
+		  level_stacker(8,4,10,100,8); break;
 	  case 10:
 	  	  level_fillTheScreen(0.5); break;	//Fill the screen, slow
 	  case 11:
