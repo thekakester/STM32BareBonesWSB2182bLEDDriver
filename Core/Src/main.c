@@ -32,6 +32,16 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 #define GAMEBOARDSIZE 30 /*How many pixels makes up a row*/
+#define NUMLEDS 300 /*Total number of LEDs*/
+
+#define GS_DEFAULT 0 /*Becomes GS_LEVELDISPLAY*/
+#define GS_PLAYLEVEL 1
+#define GS_WINNER 2
+#define GS_LOSER 3
+#define GS_BEATGAME 4
+#define GS_LEVELDISPLAY 5
+#define GS_LEVELSELECT 6
+#define GS_LOSTGAME 7
 
 /* USER CODE END PD */
 
@@ -51,16 +61,18 @@ uint8_t debugColor = 0;
 
 double theta = 0;	//Used for animating the lights
 
-int level = 0;		//Starting level
+int level = 8;		//Starting level
 
 int currentLevelSelection = 0;	//Used for level select page
-int maxLevel = 19;	//The highest level that can be selected during level select
-const int startingLives = 20;		//Fixed number.  How many lives you start with at the beginning of the game
+int maxLevel = 24;	//The highest level that can be selected during level select
+const int startingLives = 10;		//Fixed number.  How many lives you start with at the beginning of the game
 int livesRemaining = startingLives;	//After these are used up, you lose!
 int livesDelta = 0;					//How much to adjust lives by on the level display screen animation
-int livesGainedOnPerfectLevel = 3;	//If you don't mess up, gain this many lives
+int livesGainedOnPerfectLevel = 2;	//If you don't mess up, gain this many lives
 
-int gameState = 0;	//0= Display Level
+uint8_t forgivingMode = 1;		//If set, then the game slows down every time you lose to a level
+
+int gameState = GS_LEVELDISPLAY;	//0= Display Level
 int levelFrameNum = 0;	//Increments with each frame, reset when game state changes
 int prevTarget = 0;
 int cheated = 0;		//Cheating is when you do level select.  If you win while cheating, the victory screen shows red
@@ -71,6 +83,13 @@ int target = 0;	//Current moving pixel
 uint8_t targetIsLinear = 0;	//Show target as a bar on the loser screen
 uint8_t targetIsMonotonic = 0;	//Show target uint monotonic coordinate system instead of zig-zag
 int goal = 0;	//Goal pixel
+
+//Generic global level variables
+uint8_t posX = 0;
+uint8_t posY = 0;
+uint8_t dir = 0;
+int16_t cooldown = 0;
+int16_t speed = 0;
 
 int buttonIdleCounter = 0;
 uint8_t buttonDown = 0;	//Is the button currently being held down
@@ -94,6 +113,10 @@ double prevY = 9;
 uint8_t applyGravity = 0;
 int ballsScored = 0;
 
+//Stacker variables
+uint8_t stackerRowWidth[30];	//width of row
+uint8_t stackerRowOffset[30];	//x pixel coordinate of row
+
 //Level Select variables
 uint8_t levelSelectButtonPress = 0;
 
@@ -116,6 +139,8 @@ void setColorMonotonic(int, uint8_t,uint8_t,uint8_t);
 void setPxColor(int, int, uint8_t, uint8_t, uint8_t);
 void transmit();
 void HAL_SPI_TxCpltCallback(SPI_HandleTypeDef *hspi);
+void drawFastLine(uint8_t,uint8_t,uint8_t,uint8_t,uint8_t,uint8_t,uint8_t);
+
 
 /* USER CODE END PFP */
 
@@ -167,13 +192,6 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-	  int r,g,b;
-	  r = (int)255*sin(theta * 0.1);
-	  g = (int)255*sin((theta *0.1) + (1.1 * 3.1));
-	  b = (int)255*sin((theta * 0.1) + (0.7 * 3.2));
-	  if (r < 0) { r = 0; }
-	  if (g < 0) { g = 0; }
-	  if (b < 0) { b = 0; }
 
 	  //Calculate button down and button pressed
 	  buttonDown = !HAL_GPIO_ReadPin(BUTTON_GPIO_Port, BUTTON_Pin);
@@ -181,29 +199,29 @@ int main(void)
 	  prevButtonDown = buttonDown;	//Used for calculating next loop*/
 
 	  switch (gameState) {
-	  case 1:
+	  case GS_PLAYLEVEL:
 		  playGame();
 		  break;
-	  case 2:
+	  case GS_WINNER:
 		  winnerState();
 		  break;
-	  case 3:
+	  case GS_LOSER:
 		  loserState();
 		  break;
-	  case 4:
+	  case GS_BEATGAME:
 		  beatTheGame();
 		  break;
-	  case 5:
+	  case GS_LEVELDISPLAY:
 		  levelDisplay();
 		  break;
-	  case 6:
+	  case GS_LEVELSELECT:
 		  levelSelect();
 		  break;
-	  case 7:
+	  case GS_LOSTGAME:
 		  lostTheGame();
 		  break;
 	  default:
-		  gameState = 5;	//Start on level display if we ever get an error
+		  gameState = GS_LEVELDISPLAY;	//Start on level display if we ever get an error
 		  break;
 	  }
 
@@ -212,7 +230,7 @@ int main(void)
 	  //Reset the game when the button is idle for too long
 	  //Don't advance on level display, winner, or loser screens though
 	  //Don't punish people for watching the animations :)
-	  if (gameState != 2 && gameState != 3 && gameState != 5) {
+	  if (gameState != GS_WINNER && gameState != GS_LOSER && gameState != GS_LEVELDISPLAY) {
 		  buttonIdleCounter++;
 	  }
 
@@ -226,7 +244,9 @@ int main(void)
 	  transmit();	//Send out our LED data to the LEDs so they actually light up
 	  HAL_Delay(10);
 
-
+	  if (forgivingMode && gameState==GS_PLAYLEVEL) {
+		  HAL_Delay(levelAttempts * 5);	//Extra time per frame slower every time you lose
+	  }
 
 
     /* USER CODE END WHILE */
@@ -376,7 +396,7 @@ static void MX_GPIO_Init(void)
 /* USER CODE BEGIN 4 */
 
 void winnerState() {
-	clearScreen(0,64,0);	//Fill screen green
+	clearScreen(0,32,0);	//Fill screen green
 
 	//If perfect round, draw blue border
 	if (levelAttempts == 0) {
@@ -405,7 +425,7 @@ void winnerState() {
 
 		for (int i = 0; i < 300; i++) {
 			if (pseudoRand() % 100 > percentVisible) {
-				setColor(i,0,64,0);
+				setColor(i,0,32,0);
 			} else {
 				setColor(i,0,0,0);
 			}
@@ -425,7 +445,7 @@ void winnerState() {
 		}
 
 		if (levelAttempts == 1) {
-			livesDelta += 1;
+			//livesDelta += 1;
 		}
 
 		levelAttempts = 0;	//Reset level attempt counter
@@ -667,6 +687,11 @@ void levelDisplay() {
 		setColor(299,64,0,0);
 	}
 
+	//Forgiving mode indicator
+	if (forgivingMode) {
+		setPxColor(0,0,0,0,32);
+	}
+
 	//If the button is held, show the level faster
 	if (buttonDown) {
 		levelFrameNum += 4;	//Advance 5x as fast
@@ -837,39 +862,51 @@ void playGame() {
 	  case 1:
 		  level_bars(0.05); break;			//Medium speed bar
 	  case 2:
-		  level_bars(0.1); break;			//Fast bar
-	  case 3:
 		  level_singleDot(0.003,0); break;	//Single pixel, slow
-	  case 4:
+	  case 3:
 		  level_dropBombs(0.02,3,0); break;	//Drop bombs (3x)
-	  case 5:
+	  case 4:
 		  level_dropBombs(0.05,8,0); break;	//Drop bombs (8x)
+	  case 5:
+		  level_reaction(100,200); break;
 	  case 6:
-	  		level_fillTheScreen(0.5); break;	//Fill the screen, slow
+	  	  level_reaction(30,300); break;
 	  case 7:
-		  level_snake(8,64); break;
+	  	  level_reaction(15,500); break;
 	  case 8:
-		  level_snake(8,120); break;
+		  level_stacker(8,5,10,1,10); break;
 	  case 9:
-		  level_bucketDrop(1,1);break;
+		  level_stacker(8,4,10,100,10); break;
 	  case 10:
-		  level_bucketDrop(1,2);break;
+	  	  level_fillTheScreen(0.5); break;	//Fill the screen, slow
 	  case 11:
-		  level_crissCross(0.02); break;	//Criss cross
+		  level_snake(8,64); break;
 	  case 12:
-		  level_singleDot(0.015,0); break;	//Stationary goal, really fast single pixel
+		  level_snake(8,120); break;
 	  case 13:
-		  level_dropBombs(0.05,5,1); break;
+		  level_bucketDrop(1,1);break;
 	  case 14:
-		  level_fillTheScreen(2.0); break;
+		  level_bucketDrop(1,2);break;
 	  case 15:
-		  level_singleDot(0.015,1); break;	//Moving goal
+		  level_crissCross(0.02); break;	//Criss cross
 	  case 16:
-		  level_snake(3,120); break;
+		  level_singleDot(0.015,0); break;	//Stationary goal, really fast single pixel
 	  case 17:
-		  level_fillTheScreen(3.0); break;
+	  	  level_dropBombs(0.05,5,1); break;
 	  case 18:
+	  	  level_reaction(8,300); break;
+	  case 19:
+		  level_fillTheScreen(2.0); break;
+	  case 20:
+		  level_singleDot(0.015,1); break;	//Moving goal
+	  case 21:
+		  level_snake(3,120); break;
+	  case 22:
+		  level_fillTheScreen(3.0); break;
+	  case 23:
 		  level_bucketDrop(1,3);break;
+	  case 24:
+	  	  level_stacker(8,4,8,100,12); break;
 	  default:
 		  beatTheGame();
 		  break;
@@ -896,21 +933,13 @@ void level_bars(double thetaSpeed) {
 	  }
 
 	  //Display the gameboard
-	  for (int i = 0; i < 300; i++) {
-		  //Repeat the gameboard every 21 pixels
-		  int offset = (i % GAMEBOARDSIZE);	//Gives us an index from -10 to +10
-		  if (offset == target) {
-			  setColorMonotonic(i,64,64,64);
-		  } else if (offset == CENTER_PX) {
-			  setColorMonotonic(i,0,0,255);
-		  } else {
-			  setColorMonotonic(i,0,0,0);
-		  }
-	  }
+	  clearScreen(0, 0, 0);
+	  drawFastLine(0, goal, 9, goal, 0, 0, 128);	//Draw goal line
+	  drawFastLine(0, target, 9, target, 32, 32, 32);
 }
 
 void level_singleDot(double thetaSpeed, uint8_t moveGoal) {
-	goal = 150+15;
+	  goal = 150+15;
 	  target = 150 + (int)(60*sin(theta));
 
 	  //Special case: Goal moves
@@ -1008,7 +1037,7 @@ void level_fillTheScreen(double pixelsPerFrame) {
 	target = (int)theta;
 
 	  //Draw the line of blue as it grows.  Anything after blue is blank
-	  for (int i = 0; i < 300; i++) {
+	  for (int i = 0; i < NUMLEDS; i++) {
 		  int blue = 0;
 		  if (i <= target) {
 			  blue = 32;
@@ -1067,7 +1096,6 @@ void level_dropBombs(double thetaSpeed, int goalBombs, uint8_t manyStarterBombs)
 	goal = target;	//Show goal and target as the same line
 	targetIsLinear = 1;
 
-
 	  //Check button press for levels 1-3
 	  if (buttonPressed) {
 		  //Did they collide with a bomb?
@@ -1089,15 +1117,38 @@ void level_dropBombs(double thetaSpeed, int goalBombs, uint8_t manyStarterBombs)
 		  theta += thetaSpeed;
 	  }
 
-	  int progress = (bombsPlanted * 10) / goalBombs;
+	  int progress = (bombsPlanted * GAMEBOARDSIZE) / goalBombs;
 
-	  //Display the gameboard
-	  for (int i = 0; i < 300; i++) {
+	  clearScreen(0,0,0);
+
+	  //Draw a progress bar on the outer sides
+	  drawFastLine(0,0,0,progress,0,32,0);	//Left Side: Green progress
+	  drawFastLine(9,0,9,progress,0,32,0);	//Right Side: Green progress
+	  drawFastLine(0,progress+1,0,29,10,5,5); //Left Side: Remaining progress
+	  drawFastLine(9,progress+1,9,29,10,5,5); //Right Side: Remaining
+
+	  //Now draw the bombs on the screen
+	  for (uint8_t i = 0; i < 30; i++) {
+		  if (!bombPositions[i]) { continue; }	//No bomb here
+		  drawFastLine(2,i,7,i,64,0,0);
+	  }
+
+	  //Draw cursor
+	  drawFastLine(1,target,8,target,32,32,32);
+	  if (buttonDown) {
+		  drawFastLine(1,target,8,target,0,0,64);	//Blue line when the button is pressed
+	  }
+
+	  /*for (int i = 0; i < 300; i++) {
 		  //Repeat the gameboard every 21 pixels
 		  int offset = (i % GAMEBOARDSIZE);	//Gives us an index from -10 to +10
 		  int xPixel = i / 30;
 		  if (offset == target) {
-			  setColorMonotonic(i,64,64,64);
+			  if (showYellowLine) {
+				  setColorMonotonic(i,64,64,0);
+			  } else {
+				  setColorMonotonic(i,64,64,64);
+			  }
 		  } else if (bombPositions[offset] == 1) {
 			  if (xPixel >= progress) {
 				  setColorMonotonic(i,32,0,0);	//Red progress bar
@@ -1107,7 +1158,7 @@ void level_dropBombs(double thetaSpeed, int goalBombs, uint8_t manyStarterBombs)
 		  } else {
 			  setColorMonotonic(i,0,0,0);
 		  }
-	  }
+	  }*/
 
 }
 
@@ -1202,6 +1253,140 @@ void level_snake(int speed, int goalScore) {
 
 	  //Draw cursor
 	  setColorMonotonic(target,0,0,64);
+}
+
+void level_reaction(int frameTimeline, int randomWindow) {
+	if (levelFrameNum == 1) {
+		goal = pseudoRand() % randomWindow;	//Random start frame, from 0-200
+		goal += 50;	//Offset by at least 50 frames
+		target = 0;
+	}
+
+	target++;
+
+	clearScreen(0, 0, 0);
+
+	if (levelFrameNum < goal) {
+
+		if (buttonDown) {
+			gameState = 3;	//Loser stage
+			levelFrameNum = 0;
+		}
+	} else {
+		uint8_t elapsed = levelFrameNum - goal;
+		float percent = (elapsed * GAMEBOARDSIZE) / frameTimeline;
+		percent = GAMEBOARDSIZE-percent;	//Start at 100, and drain to 0
+		for (int y = 0; y < percent; y++) {
+			drawFastLine(0,y,9,y,32,32,32);
+		}
+
+		if (buttonDown) {
+			gameState = GS_WINNER;	//Winner stage
+			levelFrameNum = 0;
+		}
+	}
+
+	//If you wait too long, you lose
+	if (levelFrameNum > goal + frameTimeline) {
+		gameState = GS_LOSER;	//Loser stage
+		levelFrameNum = 0;
+	}
+}
+
+void level_stacker(int startingLayers, int initialWidth, uint8_t moveSpeed, uint8_t speedIncreaseRow, uint8_t goalHeight) {
+	if (levelFrameNum == 1) {
+		dir = 1;
+		uint8_t centerOffset = (10-initialWidth)/2;
+		for (uint8_t i = 0; i < 30; i++) {
+			if (i <= startingLayers) {
+				stackerRowWidth[i] = initialWidth;
+				stackerRowOffset[i] = centerOffset;
+			} else {
+				stackerRowWidth[i] = 0;
+				stackerRowOffset[i] = 0;
+			}
+		}
+
+		target = startingLayers;
+		speed = moveSpeed*100;	//Multiply by 100 to allow smaller changes to speed
+		cooldown = speed;
+
+		targetIsLinear = 1;	//If we lose, show target vs goal as lines
+		goal = goalHeight + startingLayers;
+	}
+
+	clearScreen(0,0,0);
+
+	//Draw our screen (start 8 rows up)
+	for (uint8_t y = 0; y < GAMEBOARDSIZE; y++) {
+		if (y == goal && y != target) {
+			drawFastLine(0,y,9,y,0,0,16);
+		}
+
+		if (stackerRowWidth[y] > 0) {
+			drawFastLine(stackerRowOffset[y],y,stackerRowOffset[y]+stackerRowWidth[y]-1,y,16,16,16);
+		}
+	}
+
+	if (buttonPressed) {
+
+		//Calculate start/end positions for both layers
+		int16_t startX = stackerRowOffset[target];
+		int16_t endX = startX+stackerRowWidth[target]-1;
+
+		int16_t prevStartX = stackerRowOffset[target-1];
+		int16_t prevEndX = prevStartX+stackerRowWidth[target]-1;
+
+		//Calculate how many pixels are hanging off on the left side
+		int leftOverhang = prevStartX - startX;
+		if (leftOverhang > 0) {
+			//Chop off some pixels
+			startX += leftOverhang;
+		}
+
+		int rightOverhang = endX-prevEndX;
+		if (rightOverhang > 0) {
+			endX -= rightOverhang;
+		}
+
+		//Check out how much overlap we have with previous layer
+		int16_t width = (endX-startX)+1;
+
+		//Update our layer
+		stackerRowOffset[target] = startX;
+		stackerRowWidth[target] = width;
+
+		if (width <= 0) {
+			gameState = GS_LOSER;
+			levelFrameNum = 0;
+		} else if (target == goal) {
+			gameState = GS_WINNER;
+			levelFrameNum = 0;
+		} else {
+			target++;
+
+			speed -= speedIncreaseRow;
+			if (speed < 1) { speed = 1; }
+
+			stackerRowWidth[target] = width;
+			//stackerRowOffset[target] = pseudoRand() % (10-width);	//Random starting point
+		}
+	}
+
+
+	//Every "n" frames, move our platform
+	cooldown -= 100;	//adjust by 100 at a time
+	if (cooldown <= 0) {
+		cooldown = speed;
+		stackerRowOffset[target] += dir;
+	}
+
+	if (stackerRowOffset[target] + stackerRowWidth[target] - 1 >= 9) {
+		dir = -1;
+	}
+	if (stackerRowOffset[target] == 0) {
+		dir = 1;
+	}
 }
 
 void level_bucketDrop(int bucketSpeed, int numBalls) {
@@ -1383,13 +1568,13 @@ void setColorMonotonic(int ledNumber, uint8_t red, uint8_t green, uint8_t blue) 
 	//Directly write this to our SPI buffer.
 	//Note that our SPI buffer starts at address 1, and each LED takes up 9 bytes of info
 
-	int strip = ledNumber / 30;
+	int strip = ledNumber / GAMEBOARDSIZE;
 
 	//Strips go up/down.  If we're on an odd number strip, invert the pixel number
 	if ((strip % 2) == 1) {
-		int pxNumber = 29-(ledNumber % 30);
+		int pxNumber = (GAMEBOARDSIZE-1)-(ledNumber % GAMEBOARDSIZE);
 
-		ledNumber = (strip * 30) + pxNumber;
+		ledNumber = (strip * GAMEBOARDSIZE) + pxNumber;
 	}
 
 	setColor(ledNumber,red,green,blue);
@@ -1400,6 +1585,34 @@ void setColorMonotonic(int ledNumber, uint8_t red, uint8_t green, uint8_t blue) 
 void setPxColor(int x, int y, uint8_t red, uint8_t green, uint8_t blue) {
 	//Calculate the LED ID based on the row/column.
 	setColorMonotonic((x*30)+y,red,green,blue);
+}
+
+//Draw horizontal or vertical lines quickly
+//cannot draw diagonal lines
+//Less checks (such as line wrapping
+void drawFastLine(uint8_t x1, uint8_t y1, uint8_t x2, uint8_t y2, uint8_t r, uint8_t g, uint8_t b) {
+
+
+	uint16_t nextPxOffset = 1;	//Draw Vertical line
+	int16_t lineLen = y2-y1;
+	if (lineLen < 0) { lineLen *= -1; }	//ABS value
+
+	if (y1==y2) {
+		nextPxOffset = GAMEBOARDSIZE; //Draw horizontal line
+		lineLen = x2-x1;
+		if (lineLen < 0) { lineLen *= -1; }	//ABS value
+	}
+
+	uint8_t startX = min(x1,x2);
+	uint8_t startY = min(y1,y2);
+
+	uint16_t pixel = (startX*GAMEBOARDSIZE) + startY;
+	for (uint8_t i = 0; i <= lineLen; i++) {
+		if (pixel >= 0 && pixel < 300) {
+			setColorMonotonic(pixel, r, g, b);
+		}
+		pixel += nextPxOffset;
+	}
 }
 
 /*This sends out all the buffered data to the LEDs themself.
