@@ -43,6 +43,9 @@
 #define GS_LEVELSELECT 6
 #define GS_LOSTGAME 7
 
+#define MAX_LEVEL 25	//Should include winner state
+#define SHUFFLE_LEVELS 1
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -61,10 +64,11 @@ uint8_t debugColor = 0;
 
 double theta = 0;	//Used for animating the lights
 
-int level = 5;		//Starting level
+int level = 0;		//Starting level
+uint8_t levelOrder[MAX_LEVEL];
 
 int currentLevelSelection = 0;	//Used for level select page
-int maxLevel = 24;	//The highest level that can be selected during level select
+int maxLevel = MAX_LEVEL;	//The highest level that can be selected during level select
 const int startingLives = 10;		//Fixed number.  How many lives you start with at the beginning of the game
 int livesRemaining = startingLives;	//After these are used up, you lose!
 int livesDelta = 0;					//How much to adjust lives by on the level display screen animation
@@ -77,6 +81,7 @@ int levelFrameNum = 0;	//Increments with each frame, reset when game state chang
 int prevTarget = 0;
 int cheated = 0;		//Cheating is when you do level select.  If you win while cheating, the victory screen shows red
 int levelAttempts = 0;	//How many times did the player try to beat this level?
+int levelExtraTime = 0;	//Extra frames before resetting the level
 uint32_t pseudoRandomSeed = 1;
 
 int target = 0;	//Current moving pixel
@@ -187,6 +192,7 @@ int main(void)
 	HAL_Delay(500);
   }
 
+  shuffleLevels();
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -438,6 +444,7 @@ void winnerState() {
 		theta = 0;	//Make sure they can't just hold down the button to win
 		gameState = 0;	//Level display (next level)
 		levelFrameNum = 0;	//Reset state counter
+		levelExtraTime = 0;	//Some levels require extra time before resetting the game
 
 		//Did they get it on their first try?  Give bonus levels
 		livesDelta = 0;
@@ -463,6 +470,35 @@ void resetGame() {
 	livesRemaining = startingLives;
 	livesDelta = 0;
 	levelAttempts = 0;
+
+}
+
+//Shuffle the order of the levels, grouped by difficulty
+void shuffleLevels() {
+	for (uint8_t i = 0; i < MAX_LEVEL; i++) {
+		levelOrder[i] = i;	//Assing a 1-to-1 mapping
+	}
+
+	if (SHUFFLE_LEVELS) {
+		shuffleLevelSubset(0,4);
+		shuffleLevelSubset(5,11);
+		shuffleLevelSubset(12,13);
+		shuffleLevelSubset(14,19);
+		shuffleLevelSubset(20,24);
+	}
+}
+
+//Shuffle a subsection of the levels, starting at startIndex, ending at endIndex(inclusive)
+void shuffleLevelSubset(startIndex,endIndex) {
+	uint8_t range = (endIndex - startIndex)+1;
+
+	for (uint8_t i = startIndex; i <= endIndex; i++) {
+		//Swap this with a different position
+		uint8_t j = (pseudoRand() % range) + startIndex;
+		uint8_t temp = levelOrder[j];
+		levelOrder[j] = levelOrder[i];
+		levelOrder[i] = temp;
+	}
 }
 
 void loserState() {
@@ -823,7 +859,7 @@ void beatTheGame() {
 	}
 
 	//If they waited long enough and beat the game, restart
-	if (levelFrameNum >= 200 && buttonDown) {
+	if (levelFrameNum >= 200 + levelExtraTime && buttonDown) {
 		resetGame();
 	}
 
@@ -857,35 +893,47 @@ int max(int a, int b) {
 
 void playGame() {
 
-	  switch (level) {
+      uint8_t levelId = levelOrder[level];
+	  switch (levelId) {
+
+	  /*EASY GAMES*/
 	  case 0:
 		  level_bars(0.02); break;			//Slow bar
 	  case 1:
-		  level_bars(0.05); break;			//Medium speed bar
-	  case 2:
 		  level_singleDot(0.003,0); break;	//Single pixel, slow
-	  case 3:
+	  case 2:
 		  level_dropBombs(0.02,3,0); break;	//Drop bombs (3x)
+	  case 3:
+		  level_reaction(100,200); break;   //Slow reaction game
 	  case 4:
-		  level_dropBombs(0.05,8,0); break;	//Drop bombs (8x)
+		  level_stacker(8,5,10,1,10); break; //Easy stacker
+
+
+	  /*MEDIUM GAMES*/
 	  case 5:
-		  level_reaction(100,200); break;
+		  level_bars(0.05); break;			//Medium speed bar
 	  case 6:
 	  	  level_reaction(30,300); break;
 	  case 7:
 	  	  level_reaction(15,500); break;
 	  case 8:
-		  level_stacker(8,5,10,1,10); break;
+		  level_dropBombs(0.05,8,0); break;	//Drop bombs (8x)
 	  case 9:
 		  level_stacker(8,4,10,100,8); break;
 	  case 10:
 	  	  level_fillTheScreen(0.5); break;	//Fill the screen, slow
 	  case 11:
-		  level_snake(8,64); break;
+		  level_snake(8,64); break;  //Slow Snake
+
+
+	  /*HARD GAMES*/
 	  case 12:
-		  level_snake(8,120); break;
-	  case 13:
 		  level_bucketDrop(1,1);break;
+	  case 13:
+		  level_snake(8,120); break; //Fast snake
+
+
+	  /*REALLY HARD GAMES*/
 	  case 14:
 		  level_bucketDrop(1,2);break;
 	  case 15:
@@ -898,6 +946,8 @@ void playGame() {
 	  	  level_reaction(8,300); break;
 	  case 19:
 		  level_fillTheScreen(2.0); break;
+
+	  /*FINAL CHALLENGE*/
 	  case 20:
 		  level_singleDot(0.015,1); break;	//Moving goal
 	  case 21:
@@ -989,22 +1039,33 @@ void level_singleDot(double thetaSpeed, uint8_t moveGoal) {
 }
 
 void level_crissCross(double thetaSpeed) {
-	  int goalDelta = (int)4 *sin(theta*3.7);	//Move the goal left and right
-	  target = (int)(HALFBOARDSIZE * sin(theta)) + HALFBOARDSIZE;
+	  if (levelFrameNum == 1) {
+		  //Offset theta initial value
+		  //This helps us fine-tune when these pixels actually overlap
+		  theta = thetaSpeed * 1000;
+		  levelExtraTime = 400;	//Extra 400 frames before resetting the game
+	  }
+	  int goalDelta = (int)4 *sin(theta*3.6);	//Move the goal left and right
+	  target = (int)(HALFBOARDSIZE * sin(theta) * 0.6) + HALFBOARDSIZE;
 
 	  //Clear the gameboard
 	  clearScreen(0,0,0);
 
 	  goal = 120+15;	//Center starting point
 	  goal += 30 * goalDelta;
+	  if (goalDelta % 2 == 0) { goal -= 1; }	//Avoid jitter
 
 	  target += 120;
 
 	  //Draw goal dot
-	  setColor(goal,64,64,64);
+	  setColor(goal,25,25,25);
 
 	  //Draw target pixel
-	  setColor(target,0,0,255);
+	  setColor(target,0,0,25);
+
+	  if (goal == target) {
+		  setColor(target,0,255,0);	//Make them light up green during overlap
+	  }
 
 	  //Check button press for levels 4+
 	  if (buttonDown) {
