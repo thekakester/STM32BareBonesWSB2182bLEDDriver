@@ -958,7 +958,7 @@ void playGame() {
 	  case 23:
 		  level_bucketDrop(1,3);break;
 	  case 24:
-	  	  level_stacker(8,4,8,100,12); break;
+	  	  level_stacker(8,5,8,100,10); break;
 	  default:
 		  beatTheGame();
 		  break;
