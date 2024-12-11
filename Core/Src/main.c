@@ -471,6 +471,7 @@ void resetGame() {
 	livesDelta = 0;
 	levelAttempts = 0;
 
+	shuffleLevels();
 }
 
 //Shuffle the order of the levels, grouped by difficulty
