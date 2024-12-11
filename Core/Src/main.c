@@ -61,7 +61,7 @@ uint8_t debugColor = 0;
 
 double theta = 0;	//Used for animating the lights
 
-int level = 8;		//Starting level
+int level = 5;		//Starting level
 
 int currentLevelSelection = 0;	//Used for level select page
 int maxLevel = 24;	//The highest level that can be selected during level select
@@ -87,7 +87,7 @@ int goal = 0;	//Goal pixel
 //Generic global level variables
 uint8_t posX = 0;
 uint8_t posY = 0;
-uint8_t dir = 0;
+int16_t dir = 0;
 int16_t cooldown = 0;
 int16_t speed = 0;
 
@@ -116,6 +116,7 @@ int ballsScored = 0;
 //Stacker variables
 uint8_t stackerRowWidth[30];	//width of row
 uint8_t stackerRowOffset[30];	//x pixel coordinate of row
+uint8_t animateButtonPress = 0;	//If 1, highlight the blocks we lost
 
 //Level Select variables
 uint8_t levelSelectButtonPress = 0;
@@ -245,7 +246,7 @@ int main(void)
 	  HAL_Delay(10);
 
 	  if (forgivingMode && gameState==GS_PLAYLEVEL) {
-		  HAL_Delay(levelAttempts * 5);	//Extra time per frame slower every time you lose
+		  HAL_Delay(levelAttempts * 2);	//Extra time per frame slower every time you lose
 	  }
 
 
@@ -1269,6 +1270,9 @@ void level_reaction(int frameTimeline, int randomWindow) {
 	if (levelFrameNum < goal) {
 
 		if (buttonDown) {
+			target = 0;  //Hide target + goal pixels
+			goal = 0;
+
 			gameState = 3;	//Loser stage
 			levelFrameNum = 0;
 		}
@@ -1277,7 +1281,9 @@ void level_reaction(int frameTimeline, int randomWindow) {
 		float percent = (elapsed * GAMEBOARDSIZE) / frameTimeline;
 		percent = GAMEBOARDSIZE-percent;	//Start at 100, and drain to 0
 		for (int y = 0; y < percent; y++) {
-			drawFastLine(0,y,9,y,32,32,32);
+
+			//Start green and fade to red as we go lower
+			drawFastLine(0,y,9,y,30-y,y,0);
 		}
 
 		if (buttonDown) {
@@ -1296,6 +1302,8 @@ void level_reaction(int frameTimeline, int randomWindow) {
 void level_stacker(int startingLayers, int initialWidth, uint8_t moveSpeed, uint8_t speedIncreaseRow, uint8_t goalHeight) {
 	if (levelFrameNum == 1) {
 		dir = 1;
+		animateButtonPress = 0;
+
 		uint8_t centerOffset = (10-initialWidth)/2;
 		for (uint8_t i = 0; i < 30; i++) {
 			if (i <= startingLayers) {
@@ -1317,68 +1325,136 @@ void level_stacker(int startingLayers, int initialWidth, uint8_t moveSpeed, uint
 
 	clearScreen(0,0,0);
 
+	//Show the goal line (as long as we're not actively trying to hit it
+	if (target != goal) {
+		drawFastLine(0,goal,9,goal,0,0,16);
+	}
+
 	//Draw our screen (start 8 rows up)
-	for (uint8_t y = 0; y < GAMEBOARDSIZE; y++) {
-		if (y == goal && y != target) {
-			drawFastLine(0,y,9,y,0,0,16);
-		}
+	for (uint8_t y = 0; y <= target; y++) {
 
 		if (stackerRowWidth[y] > 0) {
 			drawFastLine(stackerRowOffset[y],y,stackerRowOffset[y]+stackerRowWidth[y]-1,y,16,16,16);
 		}
+
+		//Draw the moving line as yellow
+		if (y == target) {
+			drawFastLine(stackerRowOffset[y],y,stackerRowOffset[y]+stackerRowWidth[y]-1,y,16,16,0);
+
+
+			if (animateButtonPress) {
+				uint8_t deadPixels = 0;
+
+				//Draw pixels that are incorrect
+				for (uint8_t x = stackerRowOffset[y]; x < stackerRowOffset[y] + stackerRowWidth[y]; x++) {
+					if (x < stackerRowOffset[y-1]	//Hanging off to left
+						|| x > stackerRowOffset[y-1]+stackerRowWidth[y-1]-1) { //Hanging off to right
+
+						//Make the red pixel "fall"
+						int dy = (cooldown-5000)/500;
+
+						setPxColor(x,y,0,0,0); //Erase pixel of line
+
+						if (dy >= -3) {
+							setPxColor(x,y+dy,32,0,0);	//Draw red pixle over top (that falls)
+						}
+						deadPixels++;
+					}
+				}
+
+				if (deadPixels == 0) { cooldown = 0; }	//Clear the "freeze" that shows dead pixels, don't pause frame
+			}
+		}
 	}
 
 	if (buttonPressed) {
-
-		//Calculate start/end positions for both layers
-		int16_t startX = stackerRowOffset[target];
-		int16_t endX = startX+stackerRowWidth[target]-1;
-
-		int16_t prevStartX = stackerRowOffset[target-1];
-		int16_t prevEndX = prevStartX+stackerRowWidth[target-1]-1;
-
-		//Calculate how many pixels are hanging off on the left side
-		int leftOverhang = prevStartX - startX;
-		if (leftOverhang > 0) {
-			//Chop off some pixels
-			startX += leftOverhang;
-		}
-
-		int rightOverhang = endX-prevEndX;
-		if (rightOverhang > 0) {
-			endX -= rightOverhang;
-		}
-
-		//Check out how much overlap we have with previous layer
-		int16_t width = (endX-startX)+1;
-
-		//Update our layer
-		stackerRowOffset[target] = startX;
-		stackerRowWidth[target] = width;
-
-		if (width <= 0) {
-			gameState = GS_LOSER;
-			levelFrameNum = 0;
-		} else if (target == goal) {
-			gameState = GS_WINNER;
-			levelFrameNum = 0;
-		} else {
-			target++;
-
-			speed -= speedIncreaseRow;
-			if (speed < 1) { speed = 1; }
-
-			stackerRowWidth[target] = width;
-			//stackerRowOffset[target] = pseudoRand() % (10-width);	//Random starting point
-		}
+		animateButtonPress = 1;	//Show button press animation if necessary
+		cooldown = 5000;	//WARNING: If you change this, make sure to change animation too
 	}
 
 
 	//Every "n" frames, move our platform
 	cooldown -= 100;	//adjust by 100 at a time
 	if (cooldown <= 0) {
+
+		//If we just finished the button pressing animation, advance to the next row
+		if (animateButtonPress) {
+			//Calculate start/end positions for both layers
+					uint8_t startX = stackerRowOffset[target];
+					uint8_t endX = startX+stackerRowWidth[target]-1;
+
+					uint8_t prevStartX = stackerRowOffset[target-1];
+					uint8_t prevEndX = prevStartX+stackerRowWidth[target-1]-1;
+
+					//Calculate how many pixels are hanging off on the left side
+					if (startX < prevStartX) {
+						//Is our end still part of the tower
+						if (endX >= prevStartX) {
+							startX = prevStartX;
+						} else {
+							//Force a lose situation (end comes before start)
+							startX = 1;
+							endX = 0;
+						}
+					}
+
+					if (endX > prevEndX) {
+						//Is our left end still part of the tower?
+						if (startX <= prevEndX) {
+							endX = prevEndX;
+						} else {
+							//Force a lose situation (end comes before start)
+							startX = 1;
+							endX = 0;
+						}
+					}
+
+
+					//Check out how much overlap we have with previous layer
+					uint8_t width = (endX-startX)+1;
+
+					//Special case, did our bar go negative
+					if (startX > endX) {
+						width = 0;	//We lost!  Avoid negative numbers
+					}
+
+					if (width > initialWidth) {
+						width = initialWidth + 1;
+					}
+
+					//Update our layer
+					stackerRowOffset[target] = startX;
+					stackerRowWidth[target] = width;
+
+					if (width == 0) {
+						gameState = GS_LOSER;
+						levelFrameNum = 0;
+						return;
+					} else if (target == goal) {
+						gameState = GS_WINNER;
+						levelFrameNum = 0;
+						return;
+					} else {
+						target++;
+						speed -= speedIncreaseRow;
+						if (speed < 1) { speed = 1; }
+						//stackerRowOffset[target] = pseudoRand() % (10-width);	//Random starting point
+						stackerRowWidth[target] = width;
+						stackerRowOffset[target] = 0;
+					}
+		}
+
+		animateButtonPress = 0;	//Turn this off if it's on
 		cooldown = speed;
-		stackerRowOffset[target] += dir;
+
+		//Attempt to move the beam
+		if (dir < 0 && stackerRowOffset[target] > 0) {
+			stackerRowOffset[target] += dir;	//Avoid negative numbers
+		}
+
+		if (dir > 0) {
+			stackerRowOffset[target] += dir;
+		}
 	}
 
 	if (stackerRowOffset[target] + stackerRowWidth[target] - 1 >= 9) {
@@ -1387,6 +1463,7 @@ void level_stacker(int startingLayers, int initialWidth, uint8_t moveSpeed, uint
 	if (stackerRowOffset[target] == 0) {
 		dir = 1;
 	}
+
 }
 
 void level_bucketDrop(int bucketSpeed, int numBalls) {
