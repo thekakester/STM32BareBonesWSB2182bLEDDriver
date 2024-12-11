@@ -1356,6 +1356,9 @@ void level_reaction(int frameTimeline, int randomWindow) {
 
 	//If you wait too long, you lose
 	if (levelFrameNum > goal + frameTimeline) {
+		target = 0;  //Hide target + goal pixels
+		goal = 0;
+
 		gameState = GS_LOSER;	//Loser stage
 		levelFrameNum = 0;
 	}
