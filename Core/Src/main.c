@@ -243,7 +243,7 @@ int main(void)
 
 	  //If they haven't pressed the button in a while, reset the game
 	  if (buttonDown) { buttonIdleCounter = 0; }
-	  if (buttonIdleCounter > 1200) {
+	  if (buttonIdleCounter > 1200 + levelExtraTime) {
 		  resetGame();
 	  }
 
@@ -860,7 +860,7 @@ void beatTheGame() {
 	}
 
 	//If they waited long enough and beat the game, restart
-	if (levelFrameNum >= 200 + levelExtraTime && buttonDown) {
+	if (levelFrameNum >= 200 && buttonDown) {
 		resetGame();
 	}
 
@@ -1044,7 +1044,7 @@ void level_crissCross(double thetaSpeed) {
 		  //Offset theta initial value
 		  //This helps us fine-tune when these pixels actually overlap
 		  theta = thetaSpeed * 1000;
-		  levelExtraTime = 400;	//Extra 400 frames before resetting the game
+		  levelExtraTime = 1200;	//Extra 1200 frames before resetting the game
 	  }
 	  int goalDelta = (int)4 *sin(theta*3.6);	//Move the goal left and right
 	  target = (int)(HALFBOARDSIZE * sin(theta) * 0.6) + HALFBOARDSIZE;
